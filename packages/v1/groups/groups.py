@@ -168,6 +168,112 @@ def create_group(conn, data):
     return {"ok": True, "group": group_to_dict(row)}
 
 
+def update_group(conn, data):
+    """Edit a group: access modes and user membership.
+
+    The group name is derived from the project identifier and the selected
+    modes, so a mode change renames the group when the derived name changes.
+    """
+    raw_id = data.get("id")
+    try:
+        group_id = int(raw_id)
+    except (TypeError, ValueError):
+        return fail("groups.error.groupNotFound")
+
+    raw_modes = data.get("accessModes", data.get("access_modes"))
+    if isinstance(raw_modes, str):
+        raw_modes = [part.strip() for part in raw_modes.split(",")]
+    modes = []
+    if isinstance(raw_modes, list):
+        for item in raw_modes:
+            letter = str(item).strip().upper()
+            if len(letter) == 1 and letter in MODE_SET and letter not in modes:
+                modes.append(letter)
+    if not modes:
+        return fail("groups.error.modesRequired")
+    modes = [letter for letter in MODE_ORDER if letter in modes]
+
+    raw_users = data.get("loginNames", data.get("users"))
+    if isinstance(raw_users, str):
+        raw_users = [part.strip() for part in raw_users.split(",")]
+    login_names = []
+    if isinstance(raw_users, list):
+        for item in raw_users:
+            value = str(item).strip()
+            if value and value not in login_names:
+                login_names.append(value)
+    if not login_names:
+        return fail("groups.error.usersRequired")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT g.id, g.name, g.access_mode, gp.project_name, p.identifier"
+            ' FROM "MiniPLM"."groups" g'
+            ' LEFT JOIN "MiniPLM"."group_projects" gp ON gp.group_id = g.id'
+            ' LEFT JOIN "MiniPLM"."projects" p ON p.name = gp.project_name'
+            " WHERE g.id = %s",
+            (group_id,),
+        )
+        row = cur.fetchone()
+        if not row or row[3] is None or row[4] is None:
+            return fail("groups.error.groupNotFound")
+        _, old_name, _, _, project_identifier = row
+        project_identifier = re.sub(r"\s+", "", project_identifier)
+
+        new_name = f"{project_identifier}_{''.join(modes)}"
+        if new_name != old_name:
+            cur.execute(
+                "SELECT 1 FROM \"MiniPLM\".\"groups\" WHERE name = %s",
+                (new_name,),
+            )
+            if cur.fetchone():
+                return fail("groups.error.nameTaken")
+            cur.execute(
+                "UPDATE \"MiniPLM\".\"groups\" SET name = %s WHERE id = %s",
+                (new_name, group_id),
+            )
+
+        cur.execute(
+            "UPDATE \"MiniPLM\".\"groups\" SET access_mode = %s WHERE id = %s",
+            ("".join(modes), group_id),
+        )
+
+        placeholders = ",".join(["%s"] * len(login_names))
+        cur.execute(
+            f"SELECT COUNT(*) FROM \"MiniPLM\".\"users\" WHERE login_name IN ({placeholders})",
+            tuple(login_names),
+        )
+        found = cur.fetchone()[0]
+        if found != len(login_names):
+            return fail("groups.error.userNotFound")
+
+        cur.execute(
+            "DELETE FROM \"MiniPLM\".\"user_groups\" WHERE group_id = %s",
+            (group_id,),
+        )
+        for login_name in login_names:
+            cur.execute(
+                "SELECT id FROM \"MiniPLM\".\"users\" WHERE login_name = %s",
+                (login_name,),
+            )
+            user_row = cur.fetchone()
+            if user_row:
+                cur.execute(
+                    "INSERT INTO \"MiniPLM\".\"user_groups\" (user_id, group_id)"
+                    " VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (user_row[0], group_id),
+                )
+
+    conn.commit()
+
+    with conn.cursor() as cur:
+        cur.execute(f"{GROUP_BASE} WHERE g.id = %s ORDER BY g.id", (group_id,))
+        row = cur.fetchone()
+        if not row:
+            return fail("groups.error.groupNotFound")
+    return {"ok": True, "group": group_to_dict(row)}
+
+
 def set_disabled(conn, data):
     raw_id = data.get("id")
     try:
@@ -224,6 +330,8 @@ def main(args, ctx=None):
             return {"ok": True, "groups": groups, "users": users, "projects": projects}
 
         operation = str(data.get("operation") or "").strip().lower()
+        if operation in ("update", "edit"):
+            return update_group(conn, data)
         if operation == "create":
             return create_group(conn, data)
         if operation in ("disable", "enable"):

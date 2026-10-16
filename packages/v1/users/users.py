@@ -119,6 +119,138 @@ def fetch_groups(cur, user_id):
     return list(groups.values())
 
 
+USER_JOIN_SELECT = (
+    "SELECT u.id, u.login_name, u.email, u.name, u.surname, u.company,"
+    " u.notify_email, u.is_disabled,"
+    " g.id AS group_id, g.name AS group_name, g.access_mode AS group_access_mode,"
+    " gp.project_name, p.id AS project_id"
+    ' FROM "MiniPLM"."users" u'
+    ' LEFT JOIN "MiniPLM"."user_groups" ug ON ug.user_id = u.id'
+    ' LEFT JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+    ' LEFT JOIN "MiniPLM"."group_projects" gp ON gp.group_id = g.id'
+    ' LEFT JOIN "MiniPLM"."projects" p ON p.name = gp.project_name'
+)
+
+
+def fetch_users(cur, user_id=None):
+    """Aggregate users with their groups and projects.
+
+    One entry per user, sorted by login name; groups sorted by name; the
+    user's project list is the de-duplicated union of the projects attached
+    to the user's groups (project ids are returned for page navigation).
+    """
+    query = USER_JOIN_SELECT
+    if user_id is not None:
+        query += " WHERE u.id = %s"
+    query += " ORDER BY u.id, g.name, p.id"
+    cur.execute(query, (user_id,) if user_id is not None else ())
+    users = {}
+    for row in cur.fetchall():
+        (
+            uid, login_name, email, name, surname, company,
+            notify_email, is_disabled,
+            group_id, group_name, access_mode, project_name, project_id,
+        ) = row
+        entry = users.setdefault(
+            uid,
+            {
+                "id": uid,
+                "loginName": login_name,
+                "email": email,
+                "name": name,
+                "surname": surname,
+                "company": company,
+                "notifyEmail": bool(notify_email),
+                "isDisabled": bool(is_disabled),
+                "_groups": {},
+                "_projects": {},
+            },
+        )
+        if group_id is not None:
+            group = entry["_groups"].setdefault(
+                group_id,
+                {
+                    "id": group_id,
+                    "name": group_name,
+                    "accessMode": access_mode,
+                    "_projects": {},
+                },
+            )
+            if project_id is not None and project_name is not None:
+                project = {"id": project_id, "name": project_name}
+                group["_projects"][project_id] = project
+                entry["_projects"][project_id] = project
+
+    result = []
+    for uid in sorted(users, key=lambda u: users[u]["loginName"].lower()):
+        entry = users[uid]
+        groups = []
+        for gid in sorted(entry["_groups"], key=lambda g: entry["_groups"][g]["name"].lower()):
+            group = entry["_groups"][gid]
+            group_projects = sorted(
+                (group["_projects"][pid] for pid in group["_projects"]),
+                key=lambda p: p["name"].lower(),
+            )
+            groups.append(
+                {
+                    "id": group["id"],
+                    "name": group["name"],
+                    "accessMode": group["accessMode"],
+                    "projects": group_projects,
+                }
+            )
+        projects = sorted(
+            (entry["_projects"][pid] for pid in entry["_projects"]),
+            key=lambda p: p["name"].lower(),
+        )
+        result.append(
+            {
+                "id": entry["id"],
+                "loginName": entry["loginName"],
+                "email": entry["email"],
+                "name": entry["name"],
+                "surname": entry["surname"],
+                "company": entry["company"],
+                "notifyEmail": entry["notifyEmail"],
+                "isDisabled": entry["isDisabled"],
+                "groups": groups,
+                "projects": projects,
+            }
+        )
+    return result
+
+
+def list_users(conn):
+    with conn.cursor() as cur:
+        users = fetch_users(cur)
+    return {
+        "ok": True,
+        "users": [
+            {
+                "id": u["id"],
+                "loginName": u["loginName"],
+                "isDisabled": u["isDisabled"],
+                "groups": u["groups"],
+                "projects": u["projects"],
+            }
+            for u in users
+        ],
+    }
+
+
+def get_user(conn, data):
+    raw_id = data.get("id")
+    try:
+        user_id = int(raw_id)
+    except (TypeError, ValueError):
+        return fail("users.error.userNotFound")
+    with conn.cursor() as cur:
+        users = fetch_users(cur, user_id)
+    if not users:
+        return fail("users.error.userNotFound")
+    return {"ok": True, "user": users[0]}
+
+
 def create_user(conn, data):
     login_name = str(data.get("loginName") or data.get("login_name") or "").strip()
     password = data.get("password")
@@ -285,6 +417,10 @@ def main(args, ctx=None):
             return {"ok": True, "minPasswordLength": min_length}
 
         operation = str(data.get("operation") or "").strip().lower()
+        if operation in ("list", "list-users"):
+            return list_users(conn)
+        if operation in ("get", "get-user"):
+            return get_user(conn, data)
         if operation == "create":
             return create_user(conn, data)
         if operation in ("disable", "enable"):

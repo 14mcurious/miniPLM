@@ -11,9 +11,11 @@ import WorkArea from "./pages/WorkArea";
 import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
 import NewUser from "./pages/NewUser";
+import UserEdit from "./pages/UserEdit";
 import Groups from "./pages/Groups";
 import GroupsList from "./pages/GroupsList";
 import NewGroup from "./pages/NewGroup";
+import GroupEdit from "./pages/GroupEdit";
 import Projects from "./pages/Projects";
 import ProjectsList from "./pages/ProjectsList";
 import NewProject from "./pages/NewProject";
@@ -39,6 +41,10 @@ const App = () => (
           <Route path="/administration/users" element={<Users />} />
           <Route path="/administration/users/users-list" element={<UsersList />} />
           <Route path="/administration/users/new-user" element={<NewUser />} />
+          <Route
+            path="/administration/users/user-edit/:userId"
+            element={<UserEdit />}
+          />
           <Route path="/administration/groups" element={<Groups />} />
           <Route
             path="/administration/groups/groups-list"
@@ -47,6 +53,10 @@ const App = () => (
           <Route
             path="/administration/groups/new-group"
             element={<NewGroup />}
+          />
+          <Route
+            path="/administration/groups/group-edit/:groupId"
+            element={<GroupEdit />}
           />
           <Route path="/administration/projects" element={<Projects />} />
           <Route

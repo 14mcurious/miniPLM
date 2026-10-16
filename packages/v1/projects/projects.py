@@ -1,5 +1,6 @@
 import json
 import re
+import time
 
 DEFAULT_MAX_SUBPROJECT_LEVELS = 10
 MAX_ALLOWED_SUBPROJECT_LEVELS = 1000
@@ -40,6 +41,90 @@ def fail(key, **params):
     if params:
         result["errorParams"] = params
     return result
+
+
+# --- Session / role / CSRF guards (Redis-backed opaque sessions) -----------
+#
+# Every Redis key is built from the generated ctx.REDIS_PREFIX plus an
+# app-local suffix, as required by the Nuvolaris Redis ACL.
+
+SYSADMIN_GROUP = "SysAdmin"
+
+
+def redis_key(ctx, name):
+    return f"{getattr(ctx, 'REDIS_PREFIX', '') or ''}{name}"
+
+
+def request_headers(args):
+    headers = args.get("__ow_headers") or args.get("headers") or {}
+    if not isinstance(headers, dict):
+        return {}
+    return {str(k).lower(): v for k, v in headers.items()}
+
+
+def auth_token(args):
+    """Opaque session token from the Authorization header."""
+    headers = request_headers(args)
+    value = str(headers.get("authorization") or "").strip()
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return value
+
+
+def load_session(ctx, args):
+    """Validate the caller's session; return its record dict or None."""
+    if not ctx or not hasattr(ctx, "REDIS"):
+        return None
+    token = auth_token(args)
+    if not token:
+        return None
+    try:
+        raw = ctx.REDIS.get(redis_key(ctx, f"auth:sess:{token}"))
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    try:
+        session = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(session, dict):
+        return None
+    try:
+        expires_at = int(session.get("expiresAt") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    if expires_at <= int(time.time()):
+        return None
+    return session
+
+
+def require_session(ctx, args):
+    session = load_session(ctx, args)
+    if session is None:
+        return None, {"ok": False, "error": "session"}
+    return session, None
+
+
+def require_csrf(ctx, args, session):
+    """CSRF token must match the one issued with this session."""
+    expected = str(session.get("csrf") or "")
+    sent = str(request_headers(args).get("x-csrf-token") or "").strip()
+    if not expected or sent != expected:
+        return False
+    return True
+
+
+def user_is_sysadmin(cur, user_id):
+    cur.execute(
+        'SELECT 1 FROM "MiniPLM"."user_groups" ug'
+        ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+        " WHERE ug.user_id = %s AND g.name = %s AND g.is_disabled = FALSE",
+        (user_id, SYSADMIN_GROUP),
+    )
+    return cur.fetchone() is not None
 
 
 def get_setting(cur, key, default):
@@ -271,12 +356,21 @@ def update_settings(conn, data):
 
 
 def main(args, ctx=None):
-    if not ctx or not hasattr(ctx, "POSTGRESQL"):
+    if not ctx or not hasattr(ctx, "POSTGRESQL") or not hasattr(ctx, "REDIS"):
         return {"ok": False, "error": "Database not configured"}
 
     method = request_method(args)
     data = request_data(args)
     conn = ctx.POSTGRESQL
+
+    # The Administration area is reserved for SysAdmin members: every
+    # request (read or write) needs a valid session and the admin role.
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    with conn.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
 
     try:
         if method == "GET":
@@ -290,6 +384,17 @@ def main(args, ctx=None):
             }
 
         operation = str(data.get("operation") or "").strip().lower()
+        mutating = operation in (
+            "create",
+            "update-parent",
+            "updateparent",
+            "set-parent",
+            "update-settings",
+            "updatesettings",
+            "set-max-levels",
+        )
+        if mutating and not require_csrf(ctx, args, session):
+            return fail("csrf")
         if operation == "create":
             return create_project(conn, data)
         if operation in ("update-parent", "updateparent", "set-parent"):

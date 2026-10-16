@@ -18,16 +18,71 @@ export class ApiError extends Error {
 }
 
 /**
+ * Module-level authentication store.
+ *
+ * The opaque session token is the only authoritative browser state; the
+ * CSRF token travels in an `x-csrf-token` header and is bound server-side to
+ * the same session (same lifetime, usable only with that session).
+ */
+let authToken: string | null = null;
+let csrfToken: string | null = null;
+
+type SessionInvalidHandler = () => void;
+const sessionInvalidHandlers = new Set<SessionInvalidHandler>();
+
+/** Called whenever the backend rejects the session (expired, revoked, ...). */
+export function onSessionInvalid(handler: SessionInvalidHandler): () => void {
+  sessionInvalidHandlers.add(handler);
+  return () => {
+    sessionInvalidHandlers.delete(handler);
+  };
+}
+
+function emitSessionInvalid(): void {
+  sessionInvalidHandlers.forEach((handler) => {
+    try {
+      handler();
+    } catch {
+      // Never let one listener break the others.
+    }
+  });
+}
+
+/** Update the headers injected into every request (called by the auth provider). */
+export function setAuthHeaders(token: string | null, csrf: string | null): void {
+  authToken = token;
+  csrfToken = csrf;
+}
+
+/** @internal Notify listeners that the session is no longer valid. */
+export function reportSessionInvalid(): void {
+  emitSessionInvalid();
+}
+
+/**
  * Call an OpenServerless web action through the dev/prod proxy and normalize
  * both direct and `{ body: ... }`-wrapped responses.
+ *
+ * When an authenticated session is active, the `Authorization` (opaque
+ * session token) and `x-csrf-token` headers are attached automatically.
  */
 export async function api<T = any>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string> | undefined),
+  };
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+    if (csrfToken) {
+      headers["x-csrf-token"] = csrfToken;
+    }
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   const raw = await response.json().catch(() => null);
   const data =
@@ -35,10 +90,17 @@ export async function api<T = any>(
       ? (raw as { body: unknown }).body
       : raw;
   const body = (data ?? {}) as Record<string, any>;
-  if (!response.ok || body.ok === false || body.error) {
+  const errorKey =
+    typeof body.error === "string" ? body.error : null;
+  if (!response.ok || body.ok === false || errorKey) {
+    // The server answers with the literal "wrong credentials" message for
+    // any failed authentication step (spec requirement).
+    if (errorKey === "session" || errorKey === "csrf") {
+      reportSessionInvalid();
+    }
     throw new ApiError(
-      body.error || `Request failed: ${response.status}`,
-      typeof body.error === "string" ? body.error : undefined,
+      errorKey || `Request failed: ${response.status}`,
+      errorKey ?? undefined,
       body.errorParams && typeof body.errorParams === "object"
         ? body.errorParams
         : undefined

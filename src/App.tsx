@@ -5,9 +5,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { I18nProvider } from "@/i18n";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { AuthProvider } from "@/hooks/useAuth";
+import RequireAuth from "@/components/RequireAuth";
+import RequireAdmin from "@/components/RequireAdmin";
 import Home from "./pages/Home";
+import Login from "./pages/Login";
 import Administration from "./pages/Administration";
 import WorkArea from "./pages/WorkArea";
+import WorkAreaProject from "./pages/WorkAreaProject";
 import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
 import NewUser from "./pages/NewUser";
@@ -28,56 +33,173 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <I18nProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <div className="fixed right-4 top-3 z-50">
-          <LanguageSwitcher />
-        </div>
-        <HashRouter>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/administration" element={<Administration />} />
-          <Route path="/administration/users" element={<Users />} />
-          <Route path="/administration/users/users-list" element={<UsersList />} />
-          <Route path="/administration/users/new-user" element={<NewUser />} />
-          <Route
-            path="/administration/users/user-edit/:userId"
-            element={<UserEdit />}
-          />
-          <Route path="/administration/groups" element={<Groups />} />
-          <Route
-            path="/administration/groups/groups-list"
-            element={<GroupsList />}
-          />
-          <Route
-            path="/administration/groups/new-group"
-            element={<NewGroup />}
-          />
-          <Route
-            path="/administration/groups/group-edit/:groupId"
-            element={<GroupEdit />}
-          />
-          <Route path="/administration/projects" element={<Projects />} />
-          <Route
-            path="/administration/projects/projects-list"
-            element={<ProjectsList />}
-          />
-          <Route
-            path="/administration/projects/new-project"
-            element={<NewProject />}
-          />
-          <Route
-            path="/administration/projects/project-edit/:projectId"
-            element={<ProjectEdit />}
-          />
-          <Route path="/administration/configuration" element={<Configuration />} />
-          <Route path="/work-area" element={<WorkArea />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-        </HashRouter>
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <div className="fixed right-4 top-3 z-50">
+            <LanguageSwitcher />
+          </div>
+          <HashRouter>
+            <Routes>
+              {/* Public: login flow (the only public entry). */}
+              <Route path="/login" element={<Login />} />
+
+              {/* Protected: everything else requires a valid session. */}
+              <Route
+                path="/"
+                element={
+                  <RequireAuth>
+                    <Home />
+                  </RequireAuth>
+                }
+              />
+
+              {/* Administration area: SysAdmin members only. */}
+              <Route
+                path="/administration"
+                element={
+                  <RequireAdmin>
+                    <Administration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/users"
+                element={
+                  <RequireAdmin>
+                    <Users />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/users/users-list"
+                element={
+                  <RequireAdmin>
+                    <UsersList />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/users/new-user"
+                element={
+                  <RequireAdmin>
+                    <NewUser />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/users/user-edit/:userId"
+                element={
+                  <RequireAdmin>
+                    <UserEdit />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/groups"
+                element={
+                  <RequireAdmin>
+                    <Groups />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/groups/groups-list"
+                element={
+                  <RequireAdmin>
+                    <GroupsList />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/groups/new-group"
+                element={
+                  <RequireAdmin>
+                    <NewGroup />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/groups/group-edit/:groupId"
+                element={
+                  <RequireAdmin>
+                    <GroupEdit />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/projects"
+                element={
+                  <RequireAdmin>
+                    <Projects />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/projects/projects-list"
+                element={
+                  <RequireAdmin>
+                    <ProjectsList />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/projects/new-project"
+                element={
+                  <RequireAdmin>
+                    <NewProject />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/projects/project-edit/:projectId"
+                element={
+                  <RequireAdmin>
+                    <ProjectEdit />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration"
+                element={
+                  <RequireAdmin>
+                    <Configuration />
+                  </RequireAdmin>
+                }
+              />
+
+              {/* Work Area: session + per-project access enforced. */}
+              <Route
+                path="/work-area"
+                element={
+                  <RequireAuth>
+                    <WorkArea />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId"
+                element={
+                  <RequireAuth>
+                    <WorkAreaProject />
+                  </RequireAuth>
+                }
+              />
+
+              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+              <Route
+                path="*"
+                element={
+                  <RequireAuth>
+                    <NotFound />
+                  </RequireAuth>
+                }
+              />
+            </Routes>
+          </HashRouter>
+        </TooltipProvider>
+      </AuthProvider>
     </I18nProvider>
   </QueryClientProvider>
 );

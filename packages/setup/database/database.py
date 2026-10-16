@@ -1,4 +1,10 @@
+import bcrypt
+
 SCHEMA = '"MiniPLM"'
+
+SYSADMIN_GROUP = "SysAdmin"
+DEFAULT_ADMIN_LOGIN = "admin"
+DEFAULT_ADMIN_PASSWORD = "Change m3"
 
 STATEMENTS = [
     'CREATE SCHEMA IF NOT EXISTS "MiniPLM"',
@@ -127,6 +133,83 @@ def main(args, ctx=None):
                 cur.execute(
                     'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
                     ("settings_default_subproject_levels",),
+                )
+            # Session policy defaults (administrator-configurable in the
+            # Configuration page): 6 hour sessions, extension prompt 10
+            # minutes before expiry, 5 minute OTP validity.
+            for key, value in (
+                ("session_duration_hours", "6"),
+                ("session_warning_minutes", "10"),
+                ("otp_ttl_seconds", "300"),
+                ("email_provider", "none"),
+            ):
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."settings" (key, value)'
+                    " VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                    (key, value),
+                )
+            # Idempotent seed of the special SysAdmin group. It has no
+            # project attachment, so by default it grants no work area
+            # access; its members can enter the Administration area only.
+            cur.execute(
+                'SELECT 1 FROM "MiniPLM"."groups" WHERE name = %s',
+                (SYSADMIN_GROUP,),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."groups"'
+                    " (name, access_mode, is_disabled) VALUES (%s, 'read', FALSE)",
+                    (SYSADMIN_GROUP,),
+                )
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
+                    ("group_sysadmin",),
+                )
+            # Idempotent seed of the default administrator account
+            # (login "admin", default password "Change m3", member of
+            # SysAdmin). Never overwrites an existing account.
+            cur.execute(
+                'SELECT 1 FROM "MiniPLM"."users" WHERE login_name = %s',
+                (DEFAULT_ADMIN_LOGIN,),
+            )
+            if cur.fetchone() is None:
+                password_hash = bcrypt.hashpw(
+                    DEFAULT_ADMIN_PASSWORD.encode("utf-8"),
+                    bcrypt.gensalt(rounds=10),
+                ).decode("utf-8")
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."users"'
+                    " (login_name, password_hash, email, name, surname, company,"
+                    "  notify_email, is_disabled)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE)",
+                    (
+                        DEFAULT_ADMIN_LOGIN,
+                        password_hash,
+                        "admin@miniplm.local",
+                        "Administrator",
+                        "System",
+                        None,
+                    ),
+                )
+                cur.execute(
+                    'SELECT id FROM "MiniPLM"."users" WHERE login_name = %s',
+                    (DEFAULT_ADMIN_LOGIN,),
+                )
+                admin_row = cur.fetchone()
+                cur.execute(
+                    'SELECT id FROM "MiniPLM"."groups" WHERE name = %s',
+                    (SYSADMIN_GROUP,),
+                )
+                sysadmin_row = cur.fetchone()
+                if admin_row and sysadmin_row:
+                    cur.execute(
+                        'INSERT INTO "MiniPLM"."user_groups" (user_id, group_id)'
+                        " VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (admin_row[0], sysadmin_row[0]),
+                    )
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
+                    ("user_default_admin",),
                 )
         conn.commit()
     except Exception as exc:  # pragma: no cover - defensive

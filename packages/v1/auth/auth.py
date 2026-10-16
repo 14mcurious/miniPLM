@@ -1,0 +1,618 @@
+"""MiniPLM authentication: login name + password + email OTP.
+
+Flow:
+  1. ``login``       verify credentials, issue a short-lived OTP (sent by
+                     email; with no email transport configured the code is
+                     returned as ``demoOtp`` so the flow stays testable).
+  2. ``verify-otp``  verify the OTP, create the opaque session (Redis,
+                     configurable TTL) plus a CSRF token bound to the same
+                     session. A user can hold only ONE active session: a new
+                     login invalidates the previous session token.
+  3. ``me``          session validation (used on every page load).
+  4. ``extend``      extend the session (same token, same CSRF token, new
+                     expiry = now + configured duration).
+  5. ``logout``      delete the session and the per-user session mapping.
+
+Every credential / OTP / group-membership failure returns the SAME message:
+``wrong credentials`` (required by the security spec, also prevents user
+enumeration).
+"""
+
+import bcrypt
+import json
+import secrets
+import time
+
+WRONG_CREDENTIALS = "wrong credentials"
+OTP_MAX_ATTEMPTS = 5
+SYSADMIN_GROUP = "SysAdmin"
+
+USER_SELECT = (
+    "SELECT id, login_name, password_hash, email, name, surname, company,"
+    " notify_email, is_disabled FROM \"MiniPLM\".\"users\" WHERE login_name = %s"
+)
+
+# --- Redis helpers (opaque sessions, OTP, single-session mapping) ---------
+#
+# Every key is built from the generated ctx.REDIS_PREFIX plus an app-local
+# suffix, as required by the Nuvolaris Redis ACL.
+#
+#   auth:otp:{loginName}   {"code", "expiresAt", "attempts"} (TTL-bound)
+#   auth:sess:{token}      {"userId", "loginName", "csrf", "expiresAt"}
+#   auth:sessuser:{userId} current active session token
+
+
+def redis_key(ctx, name):
+    return f"{getattr(ctx, 'REDIS_PREFIX', '') or ''}{name}"
+
+
+def request_headers(args):
+    headers = args.get("__ow_headers") or args.get("headers") or {}
+    if not isinstance(headers, dict):
+        return {}
+    return {str(k).lower(): v for k, v in headers.items()}
+
+
+def auth_token(args):
+    """Opaque session token from the Authorization header (or body)."""
+    headers = request_headers(args)
+    value = str(headers.get("authorization") or "").strip()
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    if value:
+        return value
+    body = args.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:
+            body = {}
+    if isinstance(body, dict) and body.get("token"):
+        return str(body.get("token"))
+    return ""
+
+
+def get_setting(cur, key, default):
+    cur.execute(
+        'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
+        (key,),
+    )
+    row = cur.fetchone()
+    if row:
+        try:
+            return int(row[0])
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def session_duration_seconds(cur):
+    return max(60, get_setting(cur, "session_duration_hours", 6) * 3600)
+
+
+def session_warning_seconds(cur):
+    return max(60, get_setting(cur, "session_warning_minutes", 10) * 60)
+
+
+def load_session(ctx, args):
+    """Validate the caller's session; return its record dict or None."""
+    if not ctx or not hasattr(ctx, "REDIS"):
+        return None
+    token = auth_token(args)
+    if not token:
+        return None
+    try:
+        raw = ctx.REDIS.get(redis_key(ctx, f"auth:sess:{token}"))
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    try:
+        session = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(session, dict):
+        return None
+    try:
+        expires_at = int(session.get("expiresAt") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    if expires_at <= int(time.time()):
+        # Expired: clean up the stale user mapping, then reject.
+        try:
+            ctx.REDIS.delete(redis_key(ctx, f"auth:sess:{token}"))
+            uid = session.get("userId")
+            if uid is not None:
+                current = ctx.REDIS.get(
+                    redis_key(ctx, f"auth:sessuser:{uid}")
+                )
+                if isinstance(current, bytes):
+                    current = current.decode("utf-8", "replace")
+                if current == token:
+                    ctx.REDIS.delete(redis_key(ctx, f"auth:sessuser:{uid}"))
+        except Exception:
+            pass
+        return None
+    return session
+
+
+def require_session(ctx, args):
+    session = load_session(ctx, args)
+    if session is None:
+        return None, {"ok": False, "error": "session"}
+    return session, None
+
+
+def require_csrf(ctx, args, session):
+    """CSRF token must match the one issued with this session."""
+    expected = str(session.get("csrf") or "")
+    sent = str(request_headers(args).get("x-csrf-token") or "").strip()
+    if not expected or sent != expected:
+        return False
+    return True
+
+
+def user_is_sysadmin(cur, user_id):
+    cur.execute(
+        'SELECT 1 FROM "MiniPLM"."user_groups" ug'
+        ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+        " WHERE ug.user_id = %s AND g.name = %s AND g.is_disabled = FALSE",
+        (user_id, SYSADMIN_GROUP),
+    )
+    return cur.fetchone() is not None
+
+
+def accessible_projects(cur, user_id):
+    """Projects reachable through the user's enabled groups (deduplicated)."""
+    cur.execute(
+        'SELECT DISTINCT p.id, p.name FROM "MiniPLM"."projects" p'
+        ' JOIN "MiniPLM"."group_projects" gp ON gp.project_name = p.name'
+        ' JOIN "MiniPLM"."user_groups" ug ON ug.group_id = gp.group_id'
+        ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+        " WHERE ug.user_id = %s AND g.is_disabled = FALSE"
+        " ORDER BY p.name",
+        (user_id,),
+    )
+    return [{"id": row[0], "name": row[1]} for row in cur.fetchall()]
+
+
+def user_has_enabled_group(cur, user_id):
+    cur.execute(
+        'SELECT 1 FROM "MiniPLM"."user_groups" ug'
+        ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+        " WHERE ug.user_id = %s AND g.is_disabled = FALSE LIMIT 1",
+        (user_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def request_data(args):
+    data = dict(args) if isinstance(args, dict) else {}
+    body = data.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except Exception:
+            body = {}
+    merged = dict(body) if isinstance(body, dict) else {}
+    ignored = {"body", "POSTGRES_URL", "__ow_method", "__ow_headers", "__ow_path"}
+    merged.update({k: v for k, v in data.items() if k not in ignored})
+    return merged
+
+
+def request_method(args):
+    return (args.get("__ow_method") or args.get("method") or "GET").upper()
+
+
+def wrong():
+    return {"ok": False, "error": WRONG_CREDENTIALS}
+
+
+def fail(key, **params):
+    result = {"ok": False, "error": key}
+    if params:
+        result["errorParams"] = params
+    return result
+
+
+def fetch_user(cur, login_name):
+    cur.execute(USER_SELECT, (login_name,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    (
+        user_id,
+        login,
+        password_hash,
+        email,
+        name,
+        surname,
+        company,
+        notify_email,
+        is_disabled,
+    ) = row
+    return {
+        "id": user_id,
+        "loginName": login,
+        "passwordHash": password_hash,
+        "email": email,
+        "name": name,
+        "surname": surname,
+        "company": company,
+        "notifyEmail": bool(notify_email),
+        "isDisabled": bool(is_disabled),
+    }
+
+
+def public_user(user):
+    """User payload safe to send to the browser (no password hash)."""
+    return {
+        "id": user["id"],
+        "loginName": user["loginName"],
+        "email": user["email"],
+        "name": user["name"],
+        "surname": user["surname"],
+        "company": user["company"],
+    }
+
+
+def issue_otp(ctx, cur, login_name):
+    ttl = max(60, get_setting(cur, "otp_ttl_seconds", 300))
+    code = "".join(secrets.choice("0123456789") for _ in range(6))
+    now = int(time.time())
+    record = json.dumps({"code": code, "expiresAt": now + ttl, "attempts": 0})
+    ctx.REDIS.set(redis_key(ctx, f"auth:otp:{login_name}"), record, ex=ttl)
+    return code
+
+
+def consume_otp(ctx, data):
+    """Verify the submitted OTP. Returns True on success, False otherwise."""
+    login_name = str(data.get("loginName") or data.get("login_name") or "").strip()
+    otp = str(data.get("otp") or "").strip()
+    if not login_name or not otp:
+        return False
+
+    key = redis_key(ctx, f"auth:otp:{login_name}")
+    try:
+        raw = ctx.REDIS.get(key)
+    except Exception:
+        raw = None
+    if raw is None:
+        return False
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    try:
+        record = json.loads(raw)
+    except Exception:
+        return False
+    code = str(record.get("code") or "")
+    expires_at = int(record.get("expiresAt") or 0)
+    attempts = int(record.get("attempts") or 0)
+
+    now = int(time.time())
+    if expires_at <= now or attempts >= OTP_MAX_ATTEMPTS:
+        try:
+            ctx.REDIS.delete(key)
+        except Exception:
+            pass
+        return False
+    if secrets.compare_digest(code, otp):
+        try:
+            ctx.REDIS.delete(key)
+        except Exception:
+            pass
+        return True
+
+    attempts += 1
+    if attempts >= OTP_MAX_ATTEMPTS:
+        try:
+            ctx.REDIS.delete(key)
+        except Exception:
+            pass
+        return False
+    try:
+        remaining = max(1, expires_at - now)
+        ctx.REDIS.set(
+            key,
+            json.dumps({"code": code, "expiresAt": expires_at, "attempts": attempts}),
+            ex=remaining,
+        )
+    except Exception:
+        pass
+    return False
+
+
+def create_session(ctx, cur, user):
+    """Create the single active session for the user (+ bound CSRF token)."""
+    token = secrets.token_urlsafe(32)
+    csrf = secrets.token_urlsafe(24)
+    duration = session_duration_seconds(cur)
+    expires_at = int(time.time()) + duration
+
+    record = json.dumps(
+        {
+            "userId": user["id"],
+            "loginName": user["loginName"],
+            "csrf": csrf,
+            "expiresAt": expires_at,
+        }
+    )
+
+    # One session per user: invalidate any previous session token.
+    user_key = redis_key(ctx, f"auth:sessuser:{user['id']}")
+    previous = None
+    try:
+        previous = ctx.REDIS.get(user_key)
+    except Exception:
+        previous = None
+    if isinstance(previous, bytes):
+        previous = previous.decode("utf-8", "replace")
+    if previous and previous != token:
+        try:
+            ctx.REDIS.delete(redis_key(ctx, f"auth:sess:{previous}"))
+        except Exception:
+            pass
+
+    ctx.REDIS.set(redis_key(ctx, f"auth:sess:{token}"), record, ex=duration)
+    ctx.REDIS.set(user_key, token, ex=duration)
+    return token, csrf, expires_at
+
+
+def do_login(ctx, cur, data):
+    login_name = str(data.get("loginName") or data.get("login_name") or "").strip()
+    password = data.get("password")
+    if not login_name or not password:
+        return wrong()
+
+    user = fetch_user(cur, login_name)
+    if user is None or user["isDisabled"]:
+        return wrong()
+    try:
+        ok = bcrypt.checkpw(
+            str(password).encode("utf-8"),
+            user["passwordHash"].encode("utf-8"),
+        )
+    except Exception:
+        ok = False
+    if not ok:
+        return wrong()
+
+    code = issue_otp(ctx, cur, login_name)
+
+    cur.execute(
+        "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
+        ("email_provider",),
+    )
+    row = cur.fetchone()
+    provider = (row[0] if row else "none") or "none"
+
+    payload = {"ok": True, "sent": True, "delivery": "email" if provider != "none" else "dev"}
+    if provider == "none":
+        # No email transport is configured in this environment: expose the
+        # code so the OTP flow can be completed and tested.
+        payload["demoOtp"] = code
+        payload["email"] = user["email"]
+    return payload
+
+
+def do_verify_otp(ctx, args, data):
+    if not consume_otp(ctx, data):
+        return wrong()
+    login_name = str(data.get("loginName") or data.get("login_name") or "").strip()
+
+    with ctx.POSTGRESQL.cursor() as cur:
+        user = fetch_user(cur, login_name)
+        if user is None or user["isDisabled"]:
+            return wrong()
+        # A user without any (enabled) group is not allowed into the system.
+        if not user_has_enabled_group(cur, user["id"]):
+            return wrong()
+        token, csrf, expires_at = create_session(ctx, cur, user)
+        is_admin = user_is_sysadmin(cur, user["id"])
+        work_areas = accessible_projects(cur, user["id"])
+        warning_at = expires_at - session_warning_seconds(cur)
+
+    return {
+        "ok": True,
+        "token": token,
+        "csrfToken": csrf,
+        "expiresAt": expires_at,
+        "warningAt": warning_at,
+        "user": public_user(user),
+        "isAdmin": is_admin,
+        "workAreas": work_areas,
+    }
+
+
+def do_me(ctx, args):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    token = auth_token(args)
+    expires_at = int(session.get("expiresAt") or 0)
+    with ctx.POSTGRESQL.cursor() as cur:
+        user = fetch_user(cur, session.get("loginName"))
+        if user is None or user["isDisabled"]:
+            # Account removed/disabled mid-session: kill the session.
+            try:
+                ctx.REDIS.delete(redis_key(ctx, f"auth:sess:{token}"))
+                if user is not None:
+                    ctx.REDIS.delete(
+                        redis_key(ctx, f"auth:sessuser:{user['id']}")
+                    )
+            except Exception:
+                pass
+            return {"ok": False, "error": "session"}
+        is_admin = user_is_sysadmin(cur, user["id"])
+        work_areas = accessible_projects(cur, user["id"])
+        warning_at = expires_at - session_warning_seconds(cur)
+
+    return {
+        "ok": True,
+        "token": token,
+        "csrfToken": str(session.get("csrf") or ""),
+        "expiresAt": expires_at,
+        "warningAt": warning_at,
+        "user": public_user(user),
+        "isAdmin": is_admin,
+        "workAreas": work_areas,
+    }
+
+
+def do_extend(ctx, args):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+    with ctx.POSTGRESQL.cursor() as cur:
+        user = fetch_user(cur, session.get("loginName"))
+        if user is None or user["isDisabled"]:
+            return {"ok": False, "error": "session"}
+        duration = session_duration_seconds(cur)
+    expires_at = int(time.time()) + duration
+    session["expiresAt"] = expires_at
+    token = auth_token(args)
+    ctx.REDIS.set(
+        redis_key(ctx, f"auth:sess:{token}"),
+        json.dumps(session),
+        ex=duration,
+    )
+    try:
+        ctx.REDIS.expire(
+            redis_key(ctx, f"auth:sessuser:{session.get('userId')}"), duration
+        )
+    except Exception:
+        pass
+    with ctx.POSTGRESQL.cursor() as cur:
+        warning_at = expires_at - session_warning_seconds(cur)
+    return {
+        "ok": True,
+        "expiresAt": expires_at,
+        "warningAt": warning_at,
+        "csrfToken": str(session.get("csrf") or ""),
+    }
+
+
+def do_logout(ctx, args):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        # Already expired / unknown session: nothing to do.
+        return {"ok": True, "loggedOut": True}
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+    token = auth_token(args)
+    try:
+        ctx.REDIS.delete(redis_key(ctx, f"auth:sess:{token}"))
+        user_key = redis_key(ctx, f"auth:sessuser:{session.get('userId')}")
+        current = ctx.REDIS.get(user_key)
+        if isinstance(current, bytes):
+            current = current.decode("utf-8", "replace")
+        if current == token:
+            ctx.REDIS.delete(user_key)
+    except Exception:
+        pass
+    return {"ok": True, "loggedOut": True}
+
+
+def do_get_settings(ctx, args):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    with ctx.POSTGRESQL.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
+        duration_hours = get_setting(cur, "session_duration_hours", 6)
+        warning_minutes = get_setting(cur, "session_warning_minutes", 10)
+        otp_ttl = get_setting(cur, "otp_ttl_seconds", 300)
+        cur.execute(
+            "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
+            ("email_provider",),
+        )
+        row = cur.fetchone()
+        provider = (row[0] if row else "none") or "none"
+    return {
+        "ok": True,
+        "sessionDurationHours": duration_hours,
+        "sessionWarningMinutes": warning_minutes,
+        "otpTtlSeconds": otp_ttl,
+        "emailProvider": provider,
+    }
+
+
+def do_update_session_settings(ctx, args, data):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+
+    raw_hours = data.get("sessionDurationHours", data.get("session_duration_hours"))
+    raw_warning = data.get("sessionWarningMinutes", data.get("session_warning_minutes"))
+    try:
+        hours = int(raw_hours)
+        warning = int(raw_warning)
+    except (TypeError, ValueError):
+        return fail("auth.error.invalidValue")
+    if hours < 1 or hours > 48:
+        return fail("auth.error.invalidValue", max=48)
+    if warning < 1 or warning >= hours * 60:
+        return fail("auth.error.invalidValue", max=hours * 60 - 1)
+
+    with ctx.POSTGRESQL.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
+        for key, value in (
+            ("session_duration_hours", str(hours)),
+            ("session_warning_minutes", str(warning)),
+        ):
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (key, value, value),
+            )
+    ctx.POSTGRESQL.commit()
+    return {
+        "ok": True,
+        "sessionDurationHours": hours,
+        "sessionWarningMinutes": warning,
+    }
+
+
+def main(args, ctx=None):
+    if not ctx or not hasattr(ctx, "POSTGRESQL") or not hasattr(ctx, "REDIS"):
+        return {"ok": False, "error": "Authentication not configured"}
+
+    method = request_method(args)
+    data = request_data(args)
+    conn = ctx.POSTGRESQL
+
+    try:
+        if method == "GET":
+            return fail("auth.error.request")
+
+        operation = str(data.get("operation") or "").strip().lower()
+        if operation == "login":
+            with conn.cursor() as cur:
+                return do_login(ctx, cur, data)
+        if operation in ("verify-otp", "verifyotp", "verify"):
+            return do_verify_otp(ctx, args, data)
+        if operation in ("me", "session", "whoami"):
+            return do_me(ctx, args)
+        if operation == "extend":
+            return do_extend(ctx, args)
+        if operation == "logout":
+            return do_logout(ctx, args)
+        if operation in ("get-settings", "getsettings"):
+            return do_get_settings(ctx, args)
+        if operation in ("update-session-settings", "updatesettings"):
+            return do_update_session_settings(ctx, args, data)
+        return fail("auth.error.request")
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return fail("auth.error.request", detail=str(exc))

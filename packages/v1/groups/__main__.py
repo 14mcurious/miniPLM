@@ -6,6 +6,13 @@ import types, os, groups
 
 builder = []
 ## build-context ##
+#--param REDIS_URL "$REDIS_URL"
+#--param REDIS_PREFIX "$REDIS_PREFIX"
+import redis
+def init_redis(args, ctx):
+  ctx.REDIS = redis.from_url(args.get("REDIS_URL", os.getenv("REDIS_URL")), decode_responses=True)
+  ctx.REDIS_PREFIX = args.get("REDIS_PREFIX", os.getenv("REDIS_PREFIX"))
+builder.append(init_redis)
 #--param POSTGRES_URL "$POSTGRES_URL"
 import psycopg
 def init_postgresql(args, ctx):

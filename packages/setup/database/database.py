@@ -25,8 +25,13 @@ STATEMENTS = [
         'CREATE TABLE IF NOT EXISTS "MiniPLM"."groups" ('
         "  id BIGSERIAL PRIMARY KEY,"
         "  name TEXT NOT NULL UNIQUE,"
-        "  access_mode TEXT NOT NULL DEFAULT 'read'"
+        "  access_mode TEXT NOT NULL DEFAULT 'read',"
+        "  is_disabled BOOLEAN NOT NULL DEFAULT FALSE"
         ")"
+    ),
+    # Idempotent migration for pre-existing groups tables.
+    (
+        'ALTER TABLE "MiniPLM"."groups" ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE'
     ),
     (
         'CREATE TABLE IF NOT EXISTS "MiniPLM"."group_projects" ('
@@ -42,7 +47,29 @@ STATEMENTS = [
         "  PRIMARY KEY (user_id, group_id)"
         ")"
     ),
-    # Application settings (password policy, ...), idempotent seed.
+    # Projects: hierarchical structure. identifier is derived from name
+    # (spaces removed) and must be unique system-wide (case-insensitive);
+    # parent_id = NULL marks a root (main) project; level = number of
+    # sub-project levels below the root (root = 0).
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."projects" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  identifier TEXT NOT NULL,"
+        "  parent_id BIGINT REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
+        "  level INTEGER NOT NULL DEFAULT 0,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    # Case-insensitive uniqueness of the derived identifier. The index name
+    # is unqualified (Postgres places it in the table's schema).
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS projects_identifier_uniq_idx'
+        ' ON "MiniPLM"."projects" (lower(identifier))'
+    ),
+    # Application settings (password policy, project depth policy, ...),
+    # idempotent seed.
     (
         'CREATE TABLE IF NOT EXISTS "MiniPLM"."settings" ('
         "  key TEXT PRIMARY KEY,"
@@ -84,6 +111,22 @@ def main(args, ctx=None):
                 cur.execute(
                     'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
                     ("settings_default_password_policy",),
+                )
+            # Idempotent seed of the default sub-project depth policy
+            # (administrator-configurable, default 10).
+            cur.execute(
+                'SELECT 1 FROM "MiniPLM"."settings" WHERE key = %s',
+                ("max_subproject_levels",),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."settings" (key, value)'
+                    " VALUES (%s, %s)",
+                    ("max_subproject_levels", "10"),
+                )
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
+                    ("settings_default_subproject_levels",),
                 )
         conn.commit()
     except Exception as exc:  # pragma: no cover - defensive

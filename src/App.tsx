@@ -12,7 +12,12 @@ import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
 import NewUser from "./pages/NewUser";
 import Groups from "./pages/Groups";
+import GroupsList from "./pages/GroupsList";
+import NewGroup from "./pages/NewGroup";
 import Projects from "./pages/Projects";
+import ProjectsList from "./pages/ProjectsList";
+import NewProject from "./pages/NewProject";
+import ProjectEdit from "./pages/ProjectEdit";
 import Configuration from "./pages/Configuration";
 import NotFound from "./pages/NotFound";
 
@@ -35,7 +40,27 @@ const App = () => (
           <Route path="/administration/users/users-list" element={<UsersList />} />
           <Route path="/administration/users/new-user" element={<NewUser />} />
           <Route path="/administration/groups" element={<Groups />} />
+          <Route
+            path="/administration/groups/groups-list"
+            element={<GroupsList />}
+          />
+          <Route
+            path="/administration/groups/new-group"
+            element={<NewGroup />}
+          />
           <Route path="/administration/projects" element={<Projects />} />
+          <Route
+            path="/administration/projects/projects-list"
+            element={<ProjectsList />}
+          />
+          <Route
+            path="/administration/projects/new-project"
+            element={<NewProject />}
+          />
+          <Route
+            path="/administration/projects/project-edit/:projectId"
+            element={<ProjectEdit />}
+          />
           <Route path="/administration/configuration" element={<Configuration />} />
           <Route path="/work-area" element={<WorkArea />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

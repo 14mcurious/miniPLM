@@ -312,11 +312,11 @@ def main(args, ctx=None):
             with conn.cursor() as cur:
                 groups = fetch_groups(cur)
                 cur.execute(
-                    "SELECT login_name, is_disabled FROM \"MiniPLM\".\"users\""
+                    "SELECT id, login_name, is_disabled FROM \"MiniPLM\".\"users\""
                     " ORDER BY login_name"
                 )
                 users = [
-                    {"loginName": row[0], "isDisabled": bool(row[1])}
+                    {"id": row[0], "loginName": row[1], "isDisabled": bool(row[2])}
                     for row in cur.fetchall()
                 ]
                 cur.execute(

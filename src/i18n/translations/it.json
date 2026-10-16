@@ -1,0 +1,15 @@
+{
+  "app.title": "Mini PLM",
+  "language.label": "Lingua",
+  "language.name.en": "English",
+  "language.name.it": "Italiano",
+  "home.title": "Mini PLM",
+  "home.administration": "Amministrazione",
+  "home.workArea": "Area di Lavoro",
+  "administration.title": "Amministrazione",
+  "workArea.title": "Area di Lavoro",
+  "notFound.title": "404",
+  "notFound.subtitle": "Oops! Pagina non trovata",
+  "notFound.home": "Torna alla Home",
+  "error.requestFailed": "Richiesta non riuscita: {status}"
+}

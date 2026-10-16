@@ -1,8 +1,0 @@
-cd workspace/truchat
-set -a
-source .env
-curl $VITE_STREAM
-ops ide deploy v1/chat
-ops invoke v1/chat
-ops invoke v1/chat input=hello
-curl -XPOST -H 'Content-Type: application/json' $VITE_STREAM/web/truchat/v1/chat -d '{"input": "hello"}' 

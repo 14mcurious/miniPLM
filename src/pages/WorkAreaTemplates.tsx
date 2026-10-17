@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -116,7 +116,7 @@ const WorkAreaTemplates = () => {
 
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
 
-  if (status === "unauthenticated") return null;
+  if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   const handleDelete = async (template: InstanceTemplate) => {
     if (!window.confirm(t("wa.deleteTemplateConfirm", { name: template.name }))) {

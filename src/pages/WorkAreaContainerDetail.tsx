@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -107,7 +107,7 @@ const WorkAreaContainerDetail = () => {
     }
   }, [status, load]);
 
-  if (status === "unauthenticated") return null;
+  if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   const backTo = `/work-area/${projectId}/work-containers`;
 

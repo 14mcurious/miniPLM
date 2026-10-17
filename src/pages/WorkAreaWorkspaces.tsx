@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -124,7 +124,7 @@ const WorkAreaWorkspaces = () => {
     setFormError(null);
   };
 
-  if (status === "unauthenticated") return null;
+  if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   return (
     <>

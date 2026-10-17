@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -5,7 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { I18nProvider } from "@/i18n";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
-import { AuthProvider } from "@/hooks/useAuth";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { warmWorkAreaActions } from "@/lib/warmup";
 import RequireAuth from "@/components/RequireAuth";
 import RequireAdmin from "@/components/RequireAdmin";
 import Home from "./pages/Home";
@@ -37,10 +39,26 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+/**
+ * Fires a best-effort warmup of the work-area actions as soon as a session
+ * is active, so the first page the user opens renders against warm
+ * OpenServerless instances instead of eating a cold start.
+ */
+const WorkAreaWarmup = () => {
+  const { status } = useAuth();
+  useEffect(() => {
+    if (status === "authenticated") {
+      warmWorkAreaActions();
+    }
+  }, [status]);
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <I18nProvider>
       <AuthProvider>
+        <WorkAreaWarmup />
         <TooltipProvider>
           <Toaster />
           <Sonner />

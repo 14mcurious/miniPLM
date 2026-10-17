@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams, useParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -333,7 +333,7 @@ const WorkAreaInstances = () => {
     }
   };
 
-  if (status === "unauthenticated") return null;
+  if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
 

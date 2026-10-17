@@ -35,6 +35,11 @@ import ProjectsList from "./pages/ProjectsList";
 import NewProject from "./pages/NewProject";
 import ProjectEdit from "./pages/ProjectEdit";
 import Configuration from "./pages/Configuration";
+import CustomTypesConfiguration from "./pages/CustomTypesConfiguration";
+import WorkflowConfiguration from "./pages/WorkflowConfiguration";
+import SearchColumnsConfiguration from "./pages/SearchColumnsConfiguration";
+import SecuritySettings from "./pages/SecuritySettings";
+import ProjectSettings from "./pages/ProjectSettings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -190,6 +195,46 @@ const App = () => (
                 element={
                   <RequireAdmin>
                     <Configuration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/workflow"
+                element={
+                  <RequireAdmin>
+                    <WorkflowConfiguration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/custom-types"
+                element={
+                  <RequireAdmin>
+                    <CustomTypesConfiguration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/search-columns"
+                element={
+                  <RequireAdmin>
+                    <SearchColumnsConfiguration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/security"
+                element={
+                  <RequireAdmin>
+                    <SecuritySettings />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/project"
+                element={
+                  <RequireAdmin>
+                    <ProjectSettings />
                   </RequireAdmin>
                 }
               />

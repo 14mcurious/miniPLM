@@ -1,147 +1,61 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import BackLink from "@/components/BackLink";
-import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { api, ApiError } from "@/lib/api";
-import CustomTypesManager from "@/pages/config/CustomTypesManager";
-import SearchColumnsSection from "@/pages/config/SearchColumnsSection";
 
-const PROJECTS_ENDPOINT = "/api/my/v1/projects";
-const AUTH_ENDPOINT = "/api/my/v1/auth";
+interface ConfigSection {
+  to: string;
+  titleKey: string;
+  descriptionKey: string;
+  openKey: string;
+}
+
+const SECTIONS: ConfigSection[] = [
+  {
+    to: "/administration/configuration/project",
+    titleKey: "projectSettings.title",
+    descriptionKey: "projectSettings.description",
+    openKey: "projectSettings.open",
+  },
+  {
+    to: "/administration/configuration/security",
+    titleKey: "securitySettings.title",
+    descriptionKey: "securitySettings.description",
+    openKey: "securitySettings.open",
+  },
+  {
+    to: "/administration/configuration/custom-types",
+    titleKey: "customTypesConfig.title",
+    descriptionKey: "customTypesConfig.description",
+    openKey: "customTypesConfig.open",
+  },
+  {
+    to: "/administration/configuration/workflow",
+    titleKey: "workflowConfig.title",
+    descriptionKey: "workflowConfig.description",
+    openKey: "workflowConfig.open",
+  },
+  {
+    to: "/administration/configuration/search-columns",
+    titleKey: "searchColumnsConfig.title",
+    descriptionKey: "searchColumnsConfig.description",
+    openKey: "searchColumnsConfig.open",
+  },
+];
 
 const Configuration = () => {
   const { t } = useI18n();
 
-  const [maxSubprojectLevels, setMaxSubprojectLevels] = useState<string>("");
-  const [sessionHours, setSessionHours] = useState<string>("");
-  const [sessionWarning, setSessionWarning] = useState<string>("");
-  const [savingDepth, setSavingDepth] = useState(false);
-  const [savingSession, setSavingSession] = useState(false);
-  const [depthError, setDepthError] = useState<string | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
-  const [bannerError, setBannerError] = useState<{
-    key: string;
-    params?: Record<string, string | number>;
-  } | null>(null);
-
-  const translate = (err: unknown, fallbackStatus = "?"): string => {
-    if (err instanceof ApiError && err.serverKey) {
-      return t(err.serverKey, err.serverParams ?? undefined);
-    }
-    return t("error.requestFailed", { status: fallbackStatus });
-  };
-
-  // Load the currently configured policies.
-  useEffect(() => {
-    api<{ maxSubprojectLevels: number }>(PROJECTS_ENDPOINT)
-      .then((data) => setMaxSubprojectLevels(String(data.maxSubprojectLevels)))
-      .catch(() => {
-        // leave the field empty; saving will surface the server error
-      });
-    api<{ sessionDurationHours: number; sessionWarningMinutes: number }>(
-      AUTH_ENDPOINT,
-      { method: "POST", body: JSON.stringify({ operation: "get-settings" }) }
-    )
-      .then((data) => {
-        setSessionHours(String(data.sessionDurationHours));
-        setSessionWarning(String(data.sessionWarningMinutes));
-      })
-      .catch(() => {
-        // leave the fields empty; saving will surface the server error
-      });
-  }, []);
-
-  const validateDepth = (): string | null => {
-    const value = Number(maxSubprojectLevels);
-    if (!/^\d+$/.test(maxSubprojectLevels.trim()) || value < 1 || value > 1000) {
-      return "configuration.error.invalidValue";
-    }
-    return null;
-  };
-
-  const validateSession = (): string | null => {
-    const hours = Number(sessionHours);
-    const warning = Number(sessionWarning);
-    if (
-      !/^\d+$/.test(sessionHours.trim()) ||
-      !/^\d+$/.test(sessionWarning.trim()) ||
-      hours < 1 ||
-      hours > 48 ||
-      warning < 1 ||
-      warning >= hours * 60
-    ) {
-      return "auth.error.invalidValue";
-    }
-    return null;
-  };
-
-  const handleSaveDepth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (savingDepth) return;
-    const error = validateDepth();
-    setDepthError(error);
-    setBannerError(null);
-    if (error) return;
-
-    setSavingDepth(true);
-    try {
-      await api(PROJECTS_ENDPOINT, {
-        method: "POST",
-        body: JSON.stringify({
-          operation: "update-settings",
-          maxSubprojectLevels: Number(maxSubprojectLevels),
-        }),
-      });
-      toast.success(t("configuration.saved"));
-    } catch (err) {
-      setBannerError(
-        err instanceof ApiError && err.serverKey
-          ? { key: err.serverKey, params: err.serverParams ?? undefined }
-          : { key: "error.requestFailed", params: { status: "?" } }
-      );
-      toast.error(translate(err));
-    } finally {
-      setSavingDepth(false);
-    }
-  };
-
-  const handleSaveSession = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (savingSession) return;
-    const error = validateSession();
-    setSessionError(error);
-    setBannerError(null);
-    if (error) return;
-
-    setSavingSession(true);
-    try {
-      await api(AUTH_ENDPOINT, {
-        method: "POST",
-        body: JSON.stringify({
-          operation: "update-session-settings",
-          sessionDurationHours: Number(sessionHours),
-          sessionWarningMinutes: Number(sessionWarning),
-        }),
-      });
-      toast.success(t("configuration.saved"));
-    } catch (err) {
-      setBannerError(
-        err instanceof ApiError && err.serverKey
-          ? { key: err.serverKey, params: err.serverParams ?? undefined }
-          : { key: "error.requestFailed", params: { status: "?" } }
-      );
-      toast.error(translate(err));
-    } finally {
-      setSavingSession(false);
-    }
-  };
-
-  const labelClass =
-    "block text-sm font-medium leading-none text-foreground mb-1";
-  const fieldClass = "w-32";
-  const fieldErrorClass = "mt-1 text-sm text-destructive";
+  // Sort sections alphabetically by translated title so the order adapts to
+  // the active language and improves discoverability.
+  const sections = useMemo(
+    () =>
+      [...SECTIONS].sort((a, b) =>
+        t(a.titleKey).localeCompare(t(b.titleKey))
+      ),
+    [t]
+  );
 
   return (
     <>
@@ -157,126 +71,24 @@ const Configuration = () => {
             </p>
           </div>
 
-          {bannerError && (
+          {sections.map((section) => (
             <div
-              role="alert"
-              className="rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive"
+              key={section.to}
+              className="flex items-center justify-between gap-4 rounded-lg border bg-card p-5 shadow-sm"
             >
-              {t(bannerError.key, bannerError.params)}
-            </div>
-          )}
-
-          <form
-            onSubmit={handleSaveDepth}
-            noValidate
-            className="space-y-4 rounded-lg border bg-card p-5 shadow-sm"
-          >
-            <div>
-              <label htmlFor="max-subproject-levels" className={labelClass}>
-                {t("configuration.maxSubprojectLevels")}
-              </label>
-              <Input
-                id="max-subproject-levels"
-                name="maxSubprojectLevels"
-                type="number"
-                min={1}
-                max={1000}
-                value={maxSubprojectLevels}
-                onChange={(e) => {
-                  setMaxSubprojectLevels(e.target.value);
-                  setDepthError(null);
-                }}
-                disabled={savingDepth}
-                className={fieldClass}
-              />
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("configuration.maxSubprojectLevelsHint")}
-              </p>
-              {depthError && (
-                <p className={fieldErrorClass}>{t(depthError)}</p>
-              )}
-            </div>
-            <div className="border-t pt-4">
-              <Button
-                type="submit"
-                disabled={savingDepth}
-                aria-busy={savingDepth}
-              >
-                {t("configuration.save")}
-              </Button>
-            </div>
-          </form>
-
-          <form
-            onSubmit={handleSaveSession}
-            noValidate
-            className="space-y-4 rounded-lg border bg-card p-5 shadow-sm"
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label htmlFor="session-hours" className={labelClass}>
-                  {t("configuration.sessionDurationHours")}
-                </label>
-                <Input
-                  id="session-hours"
-                  name="sessionDurationHours"
-                  type="number"
-                  min={1}
-                  max={48}
-                  value={sessionHours}
-                  onChange={(e) => {
-                    setSessionHours(e.target.value);
-                    setSessionError(null);
-                  }}
-                  disabled={savingSession}
-                  className={fieldClass}
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("configuration.sessionDurationHoursHint")}
+                <h2 className="text-xl font-semibold text-foreground">
+                  {t(section.titleKey)}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t(section.descriptionKey)}
                 </p>
               </div>
-              <div>
-                <label htmlFor="session-warning" className={labelClass}>
-                  {t("configuration.sessionWarningMinutes")}
-                </label>
-                <Input
-                  id="session-warning"
-                  name="sessionWarningMinutes"
-                  type="number"
-                  min={1}
-                  max={2880}
-                  value={sessionWarning}
-                  onChange={(e) => {
-                    setSessionWarning(e.target.value);
-                    setSessionError(null);
-                  }}
-                  disabled={savingSession}
-                  className={fieldClass}
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("configuration.sessionWarningMinutesHint")}
-                </p>
-              </div>
-            </div>
-            {sessionError && (
-              <p className={fieldErrorClass}>{t(sessionError)}</p>
-            )}
-            <div className="border-t pt-4">
-              <Button
-                type="submit"
-                disabled={savingSession}
-                aria-busy={savingSession}
-              >
-                {t("configuration.save")}
+              <Button asChild variant="outline">
+                <Link to={section.to}>{t(section.openKey)}</Link>
               </Button>
             </div>
-          </form>
-
-          {/* Custom types: standard (used by work instance fields) and
-              workflow (progress) managed in the same Configuration page. */}
-          <CustomTypesManager category="standard" />
-          <CustomTypesManager category="workflow" />
-          <SearchColumnsSection />
+          ))}
         </div>
       </div>
     </>

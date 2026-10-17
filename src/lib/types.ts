@@ -107,6 +107,10 @@ export interface CustomType {
   initialState?: string | null;
   /** Workflow only: allowed state-to-state transitions. */
   transitions?: WorkflowTransition[];
+  /** Workflow only: the role list ID that defines available roles. */
+  roleListId?: number | null;
+  /** Workflow only: the role list name (for display). */
+  roleListName?: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -114,6 +118,30 @@ export interface CustomType {
 export interface WorkflowTransition {
   from: string;
   to: string;
+  role?: string | null;
+}
+
+export interface UserRef {
+  id?: number;
+  loginName: string;
+  name: string;
+  surname: string;
+}
+
+export interface Role {
+  id: number;
+  name: string;
+  members: UserRef[];
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface RoleList {
+  id: number;
+  name: string;
+  members: { id: number; name: string }[];
+  createdAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface ProgressOption {

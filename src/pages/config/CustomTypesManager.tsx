@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CustomType, CustomTypeOption, WorkflowTransition } from "@/lib/types";
+import { CustomType, CustomTypeOption, WorkflowTransition, Role, RoleList } from "@/lib/types";
 
 const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
 
@@ -34,8 +34,11 @@ const CustomTypesManager = ({ category }: Props) => {
   const [options, setOptions] = useState<CustomTypeOption[]>([]);
   const [initialState, setInitialState] = useState<string>("");
   const [transitions, setTransitions] = useState<WorkflowTransition[]>([]);
+  const [roleListId, setRoleListId] = useState<number | null>(null);
   const [trFrom, setTrFrom] = useState<string>("");
   const [trTo, setTrTo] = useState<string>("");
+  const [trRole, setTrRole] = useState<string>("");
+  const [roleListsData, setRoleListsData] = useState<{ id: number; name: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -53,6 +56,8 @@ const CustomTypesManager = ({ category }: Props) => {
       const data = await api<{
         customTypes: CustomType[];
         workflowProgressType: string | null;
+        roles: Role[];
+        roleLists: RoleList[];
       }>(CUSTOM_TYPES_ENDPOINT);
       setTypes(
         (data.customTypes ?? []).filter(
@@ -61,6 +66,10 @@ const CustomTypesManager = ({ category }: Props) => {
       );
       if (category === "workflow") {
         setProgressType(data.workflowProgressType ?? null);
+        // Extract role names from the selected role list (if any)
+        // For now, just use all roles from all role lists
+        const allRoles = data.roleLists?.flatMap(rl => rl.members) || [];
+        setRoleListsData(allRoles);
       }
     } catch (err) {
       setError(translate(err));
@@ -83,6 +92,7 @@ const CustomTypesManager = ({ category }: Props) => {
     setOptions([{ label: "", value: "" }]);
     setInitialState("");
     setTransitions([]);
+    setRoleListId(null);
     setTrFrom("");
     setTrTo("");
     setFormError(null);
@@ -105,6 +115,7 @@ const CustomTypesManager = ({ category }: Props) => {
         ? type.transitions.map((tr) => ({ ...tr }))
         : []
     );
+    setRoleListId(type.roleListId ?? null);
     setTrFrom("");
     setTrTo("");
     setFormError(null);
@@ -136,6 +147,7 @@ const CustomTypesManager = ({ category }: Props) => {
     if (category === "workflow") {
       payload.initialState = initialState || null;
       payload.transitions = transitions;
+      payload.roleListId = roleListId;
     }
     try {
       if (creating) {
@@ -451,6 +463,9 @@ const CustomTypesManager = ({ category }: Props) => {
               setTrFrom={setTrFrom}
               trTo={trTo}
               setTrTo={setTrTo}
+              trRole={trRole}
+              setTrRole={setTrRole}
+              roles={roleListsData}
               busy={busy}
             />
           )}
@@ -555,6 +570,9 @@ interface WorkflowEditorProps {
   setTrFrom: (value: string) => void;
   trTo: string;
   setTrTo: (value: string) => void;
+  trRole: string;
+  setTrRole: (value: string) => void;
+  roles: { id: number; name: string }[];
   busy: boolean;
 }
 
@@ -572,6 +590,9 @@ const WorkflowEditor = ({
   setTrFrom,
   trTo,
   setTrTo,
+  trRole,
+  setTrRole,
+  roles,
   busy,
 }: WorkflowEditorProps) => {
   const { t } = useI18n();
@@ -581,10 +602,11 @@ const WorkflowEditor = ({
 
   const addTransition = () => {
     if (!trFrom || !trTo) return;
-    if (transitions.some((tr) => tr.from === trFrom && tr.to === trTo)) return;
-    setTransitions([...transitions, { from: trFrom, to: trTo }]);
+    if (transitions.some((tr) => tr.from === trFrom && tr.to === trTo && tr.role === trRole)) return;
+    setTransitions([...transitions, { from: trFrom, to: trTo, role: trRole || null }]);
     setTrFrom("");
     setTrTo("");
+    setTrRole("");
   };
 
   const removeTransition = (index: number) => {
@@ -642,12 +664,16 @@ const WorkflowEditor = ({
           <ul className="space-y-1">
             {transitions.map((tr, index) => (
               <li
-                key={`${tr.from}-${tr.to}`}
+                key={`${tr.from}-${tr.to}-${tr.role || "none"}`}
                 className="flex items-center gap-2 rounded-md border p-2 text-sm text-foreground"
               >
                 <span className="font-medium">{tr.from}</span>
                 <span className="text-muted-foreground">→</span>
                 <span className="font-medium">{tr.to}</span>
+                <span className="text-muted-foreground">:</span>
+                <span className={tr.role ? "text-primary" : "text-muted-foreground"}>
+                  {tr.role || t("ct.roleAny")}
+                </span>
                 <Button
                   size="sm"
                   variant="outline"
@@ -710,6 +736,29 @@ const WorkflowEditor = ({
               ))}
             </select>
           </div>
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="ct-transition-role"
+              className="text-xs text-muted-foreground"
+            >
+              {t("ct.roleForTransition")}
+            </label>
+            <select
+              id="ct-transition-role"
+              name="ctTransitionRole"
+              value={trRole}
+              onChange={(e) => setTrRole(e.target.value)}
+              disabled={busy || roles.length === 0}
+              className={selectClass}
+            >
+              <option value="">{t("ct.roleAny")}</option>
+              {roles.map((role) => (
+                <option key={role.id} value={role.name}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -721,6 +770,33 @@ const WorkflowEditor = ({
             {t("ct.workflowAddTransition")}
           </Button>
         </div>
+      </div>
+
+      <div>
+        <label
+          htmlFor="ct-role-list"
+          className="mb-1 block text-sm font-medium text-foreground"
+        >
+          {t("ct.roleList")}
+        </label>
+        <select
+          id="ct-role-list"
+          name="ctRoleList"
+          value={roleListId ?? ""}
+          onChange={(e) => setRoleListId(e.target.value ? Number(e.target.value) : null)}
+          disabled={busy}
+          className={selectClass}
+        >
+          <option value="">— {t("ct.roleAny")} —</option>
+          {roleListsData.map((rl) => (
+            <option key={rl.id} value={rl.id}>
+              {rl.name}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("ct.workflowTransitionsHint")}
+        </p>
       </div>
     </div>
   );

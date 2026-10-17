@@ -207,6 +207,53 @@ STATEMENTS = [
         'ALTER TABLE "MiniPLM"."custom_types"'
         " ADD COLUMN IF NOT EXISTS transitions JSONB NOT NULL DEFAULT '[]'"
     ),
+    # Workflow role list association: which role list applies to this
+    # workflow type (NULL = no role constraints).
+    (
+        'ALTER TABLE "MiniPLM"."custom_types"'
+        ' ADD COLUMN IF NOT EXISTS role_list_id BIGINT NULL'
+    ),
+    # Workflow roles: assignable to users, referenced by role lists and by
+    # workflow transitions (transition.role = role name).
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."roles" ('
+        '  id BIGSERIAL PRIMARY KEY,'
+        '  name TEXT NOT NULL,'
+        '  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),'
+        '  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()'
+        ')'
+    ),
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS role_name_uniq_idx'
+        ' ON "MiniPLM"."roles" (lower(name))'
+    ),
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."user_roles" ('
+        '  user_id BIGINT NOT NULL REFERENCES "MiniPLM"."users"(id) ON DELETE CASCADE,'
+        '  role_id BIGINT NOT NULL REFERENCES "MiniPLM"."roles"(id) ON DELETE CASCADE,'
+        '  PRIMARY KEY (user_id, role_id)'
+        ')'
+    ),
+    # Named lists of roles, reusable across workflow types.
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."role_lists" ('
+        '  id BIGSERIAL PRIMARY KEY,'
+        '  name TEXT NOT NULL,'
+        '  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),'
+        '  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()'
+        ')'
+    ),
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS role_list_name_uniq_idx'
+        ' ON "MiniPLM"."role_lists" (lower(name))'
+    ),
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."role_list_members" ('
+        '  role_list_id BIGINT NOT NULL REFERENCES "MiniPLM"."role_lists"(id) ON DELETE CASCADE,'
+        '  role_id BIGINT NOT NULL REFERENCES "MiniPLM"."roles"(id) ON DELETE CASCADE,'
+        '  PRIMARY KEY (role_list_id, role_id)'
+        ')'
+    ),
 ]
 
 

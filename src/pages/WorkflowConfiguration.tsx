@@ -3,6 +3,8 @@ import BackLink from "@/components/BackLink";
 import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import CustomTypesManager from "@/pages/config/CustomTypesManager";
+import RolesManager from "@/pages/config/RolesManager";
+import RoleListsManager from "@/pages/config/RoleListsManager";
 
 /**
  * Separate page for the workflow (progress) custom-type configuration.
@@ -19,7 +21,7 @@ const WorkflowConfiguration = () => {
         label={t("configuration.title")}
       />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-xl space-y-6">
+        <div className="w-full max-w-5xl space-y-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="mb-2 text-4xl font-bold tracking-tight text-foreground">
@@ -36,6 +38,8 @@ const WorkflowConfiguration = () => {
             </Button>
           </div>
 
+          <RolesManager />
+          <RoleListsManager />
           <CustomTypesManager category="workflow" />
         </div>
       </div>

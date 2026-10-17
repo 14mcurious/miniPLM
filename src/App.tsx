@@ -13,6 +13,13 @@ import Login from "./pages/Login";
 import Administration from "./pages/Administration";
 import WorkArea from "./pages/WorkArea";
 import WorkAreaProject from "./pages/WorkAreaProject";
+import WorkAreaWorkspaces from "./pages/WorkAreaWorkspaces";
+import WorkAreaContainers from "./pages/WorkAreaContainers";
+import WorkAreaContainerDetail from "./pages/WorkAreaContainerDetail";
+import WorkAreaInstances from "./pages/WorkAreaInstances";
+import WorkAreaInstanceDetail from "./pages/WorkAreaInstanceDetail";
+import WorkAreaTemplates from "./pages/WorkAreaTemplates";
+import WorkAreaSearch from "./pages/WorkAreaSearch";
 import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
 import NewUser from "./pages/NewUser";
@@ -183,6 +190,62 @@ const App = () => (
                 element={
                   <RequireAuth>
                     <WorkAreaProject />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/workspaces"
+                element={
+                  <RequireAuth>
+                    <WorkAreaWorkspaces />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-containers"
+                element={
+                  <RequireAuth>
+                    <WorkAreaContainers />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-containers/:containerId"
+                element={
+                  <RequireAuth>
+                    <WorkAreaContainerDetail />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-instances"
+                element={
+                  <RequireAuth>
+                    <WorkAreaInstances />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-instances/:instanceId"
+                element={
+                  <RequireAuth>
+                    <WorkAreaInstanceDetail />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/templates"
+                element={
+                  <RequireAuth>
+                    <WorkAreaTemplates />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/search"
+                element={
+                  <RequireAuth>
+                    <WorkAreaSearch />
                   </RequireAuth>
                 }
               />

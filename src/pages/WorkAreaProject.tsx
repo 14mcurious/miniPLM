@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,10 +19,11 @@ interface ProjectInfo {
 }
 
 /**
- * Work area of a specific project (1-to-1 association).
+ * Work area hub of a specific project (1-to-1 association).
  *
- * All operations inside this area stay within the scope of the selected
- * project; the backend re-checks the access rights on every request.
+ * The work area is where the project's work lives: work spaces (tree),
+ * work containers, work instances and the full-text search. Access is
+ * re-checked by the backend on every request.
  */
 const WorkAreaProject = () => {
   const { t } = useI18n();
@@ -82,6 +83,30 @@ const WorkAreaProject = () => {
   const known = projectId
     ? workAreas.some((area) => String(area.id) === projectId)
     : false;
+  const base = `/work-area/${projectId}`;
+
+  const cards = [
+    {
+      to: `${base}/workspaces`,
+      title: t("wa.workspaces"),
+      desc: t("wa.workspacesDesc"),
+    },
+    {
+      to: `${base}/work-containers`,
+      title: t("wa.workContainers"),
+      desc: t("wa.workContainersDesc"),
+    },
+    {
+      to: `${base}/work-instances`,
+      title: t("wa.workInstances"),
+      desc: t("wa.workInstancesDesc"),
+    },
+    {
+      to: `${base}/search`,
+      title: t("wa.search"),
+      desc: t("wa.searchDesc"),
+    },
+  ];
 
   return (
     <>
@@ -108,50 +133,47 @@ const WorkAreaProject = () => {
                 {t("workArea.scopeNote", { name: project.name })}
               </p>
 
-              <div className="rounded-lg border bg-card p-6 shadow-sm">
-                <dl className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                      {t("workArea.project")}
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-foreground">
-                      {project.name}
-                    </dd>
-                  </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {cards.map((card) => (
+                  <Link
+                    key={card.to}
+                    to={card.to}
+                    className="rounded-lg border bg-card p-5 shadow-sm transition-colors hover:bg-muted"
+                  >
+                    <div className="text-base font-semibold text-foreground">
+                      {card.title}
+                    </div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {card.desc}
+                    </div>
+                  </Link>
+                ))}
+              </div>
+
+              <div className="mt-6 rounded-lg border bg-card p-5 text-sm text-muted-foreground shadow-sm">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs uppercase tracking-wide text-muted-foreground">
                       {t("workArea.identifier")}
                     </dt>
-                    <dd className="mt-1 text-sm font-medium text-foreground">
+                    <dd className="mt-1 font-medium text-foreground">
                       {project.identifier}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                      {t("workArea.level")}
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-foreground">
-                      {project.isRoot
-                        ? t("workArea.levelRoot")
-                        : t("workArea.levelValue", { level: String(project.level) })}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs uppercase tracking-wide text-muted-foreground">
                       {t("workArea.parent")}
                     </dt>
-                    <dd className="mt-1 text-sm font-medium text-foreground">
+                    <dd className="mt-1 font-medium text-foreground">
                       {project.parentName ?? t("workArea.parentNone")}
                     </dd>
                   </div>
-                </dl>
-
-                <div className="mt-6 border-t pt-4 text-sm text-muted-foreground">
-                  {t("workArea.ready", { name: project.name })}
-                  {known ? null : (
-                    <span className="ml-1">{t("workArea.scopeNote", { name: project.name })}</span>
-                  )}
                 </div>
+                {!known && (
+                  <p className="mt-4 border-t pt-3">
+                    {t("workArea.scopeNote", { name: project.name })}
+                  </p>
+                )}
               </div>
             </>
           )}

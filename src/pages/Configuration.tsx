@@ -5,6 +5,8 @@ import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
+import CustomTypesManager from "@/pages/config/CustomTypesManager";
+import SearchColumnsSection from "@/pages/config/SearchColumnsSection";
 
 const PROJECTS_ENDPOINT = "/api/my/v1/projects";
 const AUTH_ENDPOINT = "/api/my/v1/auth";
@@ -269,6 +271,12 @@ const Configuration = () => {
               </Button>
             </div>
           </form>
+
+          {/* Custom types: standard (used by work instance fields) and
+              workflow (progress) managed in the same Configuration page. */}
+          <CustomTypesManager category="standard" />
+          <CustomTypesManager category="workflow" />
+          <SearchColumnsSection />
         </div>
       </div>
     </>

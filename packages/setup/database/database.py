@@ -1,4 +1,5 @@
 import bcrypt
+import json
 
 SCHEMA = '"MiniPLM"'
 
@@ -90,6 +91,111 @@ STATEMENTS = [
         "  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()"
         ")"
     ),
+    # Work spaces: hierarchical (parent_id), scoped to a project. A project
+    # contains work spaces; a work space contains zero or more work spaces
+    # and zero or more work containers.
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."workspaces" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
+        "  name TEXT NOT NULL,"
+        "  title TEXT,"
+        "  parent_id BIGINT REFERENCES \"MiniPLM\".\"workspaces\"(id) ON DELETE CASCADE,"
+        "  created_by BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS workspace_name_uniq_idx'
+        ' ON "MiniPLM"."workspaces" (project_id, lower(name))'
+    ),
+    # Work containers: entity living directly in a project or inside a work
+    # space. identifier is the unique system id (WC-000001 style).
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."work_containers" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  identifier TEXT NOT NULL UNIQUE,"
+        "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
+        "  workspace_id BIGINT REFERENCES \"MiniPLM\".\"workspaces\"(id) ON DELETE CASCADE,"
+        "  name TEXT NOT NULL,"
+        "  title TEXT,"
+        "  description TEXT,"
+        "  author_id BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
+        "  progress TEXT,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    # History / audit trail of work containers: who created or modified the
+    # entity, when, and which fields changed.
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."work_container_history" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  work_container_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"work_containers\"(id) ON DELETE CASCADE,"
+        "  user_id BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
+        "  action TEXT NOT NULL,"
+        "  changed_fields TEXT,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    # Work instance templates: JSON definition of the fields a work instance
+    # of a project can carry (field name, type, optional description, and
+    # for custom-type fields the referenced custom type).
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."work_instance_templates" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
+        "  name TEXT NOT NULL,"
+        "  definition JSONB NOT NULL DEFAULT '[]',"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS template_name_uniq_idx'
+        ' ON "MiniPLM"."work_instance_templates" (project_id, lower(name))'
+    ),
+    # Work instances: documents/files/entities belonging to a work container.
+    # instance_id is the string id (WI-000001 style); fields is the JSON
+    # array of {name, type, value, ...} entries; assignees is the JSON array
+    # of user ids.
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."work_instances" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  instance_id TEXT NOT NULL UNIQUE,"
+        "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
+        "  work_container_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"work_containers\"(id) ON DELETE CASCADE,"
+        "  name TEXT NOT NULL,"
+        "  author_id BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
+        "  progress TEXT,"
+        "  assignees JSONB NOT NULL DEFAULT '[]',"
+        "  template_id BIGINT REFERENCES \"MiniPLM\".\"work_instance_templates\"(id) ON DELETE SET NULL,"
+        "  fields JSONB NOT NULL DEFAULT '[]',"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    # Custom types: enumerated types based on number/date/string, single or
+    # multi select, managed in the Configuration area (standard types and
+    # workflow/progress types).
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."custom_types" ('
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  value_type TEXT NOT NULL DEFAULT 'string',"
+        "  multi_select BOOLEAN NOT NULL DEFAULT FALSE,"
+        "  category TEXT NOT NULL DEFAULT 'standard',"
+        "  options JSONB NOT NULL DEFAULT '[]',"
+        "  is_disabled BOOLEAN NOT NULL DEFAULT FALSE,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    (
+        'CREATE UNIQUE INDEX IF NOT EXISTS custom_type_name_uniq_idx'
+        ' ON "MiniPLM"."custom_types" (lower(name))'
+    ),
 ]
 
 
@@ -147,6 +253,31 @@ def main(args, ctx=None):
                     'INSERT INTO "MiniPLM"."settings" (key, value)'
                     " VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                     (key, value),
+                )
+            # Idempotent seed of the search-results table columns
+            # (administrator-configurable in the Configuration page): the
+            # extra columns shown next to name/title, per result category.
+            cur.execute(
+                'SELECT 1 FROM "MiniPLM"."settings" WHERE key = %s',
+                ("search_columns",),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)',
+                    (
+                        "search_columns",
+                        json.dumps(
+                            {
+                                "workspace": ["title", "parent", "updated"],
+                                "workcontainer": ["title", "progress", "author", "updated"],
+                                "workinstance": ["progress", "assignees", "template", "updated"],
+                            }
+                        ),
+                    ),
+                )
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."seed_marker" (name) VALUES (%s)',
+                    ("settings_default_search_columns",),
                 )
             # Idempotent seed of the special SysAdmin group. It has no
             # project attachment, so by default it grants no work area

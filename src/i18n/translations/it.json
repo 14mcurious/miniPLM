@@ -370,6 +370,8 @@
   "ct.optionValue": "Valore",
   "ct.optionLabel": "Etichetta (opzionale)",
   "ct.addOption": "Aggiungi valore",
+  "ct.moveUp": "Sposta su",
+  "ct.moveDown": "Sposta giù",
   "ct.error.nameRequired": "Il nome è obbligatorio",
   "ct.saved": "Custom type salvato",
   "ct.deleteConfirm": "Eliminare “{name}”?",

@@ -320,6 +320,52 @@ const CustomTypesManager = ({ category }: Props) => {
                 key={index}
                 className="flex items-center gap-2"
               >
+                <div className="flex flex-col gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    aria-label={t("ct.moveUp")}
+                    title={t("ct.moveUp")}
+                    onClick={() =>
+                      setOptions((prev) => {
+                        if (index <= 0) return prev;
+                        const next = [...prev];
+                        [next[index - 1], next[index]] = [
+                          next[index],
+                          next[index - 1],
+                        ];
+                        return next;
+                      })
+                    }
+                    disabled={busy || index === 0}
+                    className="h-7 w-8 px-0"
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    aria-label={t("ct.moveDown")}
+                    title={t("ct.moveDown")}
+                    onClick={() =>
+                      setOptions((prev) => {
+                        if (index >= prev.length - 1) return prev;
+                        const next = [...prev];
+                        [next[index + 1], next[index]] = [
+                          next[index],
+                          next[index + 1],
+                        ];
+                        return next;
+                      })
+                    }
+                    disabled={busy || index === options.length - 1}
+                    className="h-7 w-8 px-0"
+                  >
+                    ↓
+                  </Button>
+                </div>
                 <Input
                   id={`ct-option-value-${index}`}
                   name={`ctOptionValue${index}`}

@@ -370,6 +370,8 @@
   "ct.optionValue": "Value",
   "ct.optionLabel": "Label (optional)",
   "ct.addOption": "Add value",
+  "ct.moveUp": "Move up",
+  "ct.moveDown": "Move down",
   "ct.error.nameRequired": "Name is required",
   "ct.saved": "Custom type saved",
   "ct.deleteConfirm": "Delete “{name}”?",

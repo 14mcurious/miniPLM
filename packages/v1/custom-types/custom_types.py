@@ -163,6 +163,8 @@ def custom_type_to_dict(row):
         is_disabled,
         created_at,
         updated_at,
+        initial_state,
+        transitions,
     ) = row
     return {
         "id": type_id,
@@ -172,16 +174,59 @@ def custom_type_to_dict(row):
         "category": category,
         "options": options if isinstance(options, list) else [],
         "isDisabled": bool(is_disabled),
+        "initialState": initial_state if isinstance(initial_state, str) else None,
+        "transitions": transitions if isinstance(transitions, list) else [],
         "createdAt": created_at.isoformat() if created_at else None,
         "updatedAt": updated_at.isoformat() if updated_at else None,
     }
+
+
+def validate_transitions(option_values, raw_transitions):
+    """Normalize and validate the workflow state transitions.
+
+    Transitions are {from, to} pairs referencing existing option values.
+    Duplicates are dropped; invalid references are rejected.
+    """
+    if raw_transitions is None:
+        raw_transitions = []
+    if not isinstance(raw_transitions, list):
+        return None, fail("customTypes.error.transitions")
+    valid = set(option_values)
+    transitions = []
+    seen = set()
+    for item in raw_transitions:
+        if not isinstance(item, dict):
+            return None, fail("customTypes.error.transitions")
+        src = str(item.get("from") or "").strip()
+        dst = str(item.get("to") or "").strip()
+        if not src or not dst:
+            return None, fail("customTypes.error.transitionValue")
+        if src not in valid or dst not in valid:
+            return None, fail("customTypes.error.transitionValue")
+        key = (src, dst)
+        if key in seen:
+            continue
+        seen.add(key)
+        transitions.append({"from": src, "to": dst})
+    return transitions, None
+
+
+def validate_initial_state(option_values, raw_initial):
+    """Validate the initial state value (must be one of the options)."""
+    if raw_initial is None or raw_initial == "":
+        return None, None
+    initial = str(raw_initial).strip()
+    if initial not in option_values:
+        return None, fail("customTypes.error.initialState")
+    return initial, None
 
 
 def do_list(ctx, session):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
             'SELECT id, name, value_type, multi_select, category, options,'
-            ' is_disabled, created_at, updated_at FROM "MiniPLM"."custom_types"'
+            ' is_disabled, created_at, updated_at, initial_state, transitions'
+            ' FROM "MiniPLM"."custom_types"'
             " ORDER BY category, name COLLATE \"C\""
         )
         rows = cur.fetchall()
@@ -214,6 +259,17 @@ def do_create(ctx, session, data):
         options, error = validate_options(value_type, data.get("options"))
         if error is not None:
             return error
+        option_values = [opt["value"] for opt in options]
+        initial_state, error = validate_initial_state(
+            option_values, data.get("initialState", data.get("initial_state"))
+        )
+        if error is not None:
+            return error
+        transitions, error = validate_transitions(
+            option_values, data.get("transitions")
+        )
+        if error is not None:
+            return error
         cur.execute(
             'SELECT 1 FROM "MiniPLM"."custom_types" WHERE lower(name) = lower(%s)',
             (name,),
@@ -222,9 +278,18 @@ def do_create(ctx, session, data):
             return fail("customTypes.error.nameTaken")
         cur.execute(
             'INSERT INTO "MiniPLM"."custom_types"'
-            " (name, value_type, multi_select, category, options, is_disabled)"
-            " VALUES (%s, %s, %s, %s, %s, FALSE)",
-            (name, value_type, multi_select, category, json.dumps(options)),
+            " (name, value_type, multi_select, category, options, is_disabled,"
+            "  initial_state, transitions)"
+            " VALUES (%s, %s, %s, %s, %s, FALSE, %s, %s)",
+            (
+                name,
+                value_type,
+                multi_select,
+                category,
+                json.dumps(options),
+                initial_state,
+                json.dumps(transitions),
+            ),
         )
         cur.execute(
             'SELECT currval(%s::regclass)', ('"MiniPLM".custom_types_id_seq',)
@@ -235,7 +300,8 @@ def do_create(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
             'SELECT id, name, value_type, multi_select, category, options,'
-            ' is_disabled, created_at, updated_at FROM "MiniPLM"."custom_types"'
+            ' is_disabled, created_at, updated_at, initial_state, transitions'
+            ' FROM "MiniPLM"."custom_types"'
             " WHERE id = %s",
             (type_id,),
         )
@@ -277,14 +343,24 @@ def do_update(ctx, session, data):
 
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
-            'SELECT id, name, value_type, multi_select, category, options'
+            'SELECT id, name, value_type, multi_select, category, options,'
+            ' initial_state, transitions'
             ' FROM "MiniPLM"."custom_types" WHERE id = %s',
             (type_id,),
         )
         row = cur.fetchone()
         if not row:
             return fail("customTypes.error.notFound")
-        _, current_name, current_value_type, current_multi, current_category, current_options = row
+        (
+            _,
+            current_name,
+            current_value_type,
+            current_multi,
+            current_category,
+            current_options,
+            current_initial_state,
+            current_transitions,
+        ) = row
 
         name = str(data.get("name") or "").strip() or current_name
         if not NAME_RE.match(name):
@@ -308,6 +384,45 @@ def do_update(ctx, session, data):
                 return error
         if options is None:
             options = current_options if isinstance(current_options, list) else []
+        option_values = [opt["value"] for opt in options]
+
+        # Initial state: defaults to the current value; cleared if the
+        # option it referenced was removed.
+        if "initialState" in data or "initial_state" in data:
+            initial_state, error = validate_initial_state(
+                option_values,
+                data.get("initialState", data.get("initial_state")),
+            )
+            if error is not None:
+                return error
+        else:
+            initial_state = (
+                current_initial_state
+                if current_initial_state in option_values
+                else None
+            )
+
+        # Transitions: defaults to the current ones, pruned of references
+        # to option values that no longer exist.
+        if "transitions" in data:
+            transitions, error = validate_transitions(
+                option_values, data.get("transitions")
+            )
+            if error is not None:
+                return error
+        else:
+            raw_current = (
+                current_transitions
+                if isinstance(current_transitions, list)
+                else []
+            )
+            transitions = [
+                {"from": t["from"], "to": t["to"]}
+                for t in raw_current
+                if isinstance(t, dict)
+                and t.get("from") in option_values
+                and t.get("to") in option_values
+            ]
 
         if name != current_name:
             cur.execute(
@@ -336,6 +451,7 @@ def do_update(ctx, session, data):
             'UPDATE "MiniPLM"."custom_types"'
             " SET name = %s, value_type = %s, multi_select = %s,"
             "     category = %s, options = %s, is_disabled = %s,"
+            "     initial_state = %s, transitions = %s,"
             "     updated_at = now()"
             " WHERE id = %s",
             (
@@ -345,6 +461,8 @@ def do_update(ctx, session, data):
                 category,
                 json.dumps(options),
                 is_disabled,
+                initial_state,
+                json.dumps(transitions),
                 type_id,
             ),
         )
@@ -353,7 +471,8 @@ def do_update(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
             'SELECT id, name, value_type, multi_select, category, options,'
-            ' is_disabled, created_at, updated_at FROM "MiniPLM"."custom_types"'
+            ' is_disabled, created_at, updated_at, initial_state, transitions'
+            ' FROM "MiniPLM"."custom_types"'
             " WHERE id = %s",
             (type_id,),
         )

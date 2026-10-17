@@ -103,8 +103,17 @@ export interface CustomType {
   category: string;
   options: CustomTypeOption[];
   isDisabled: boolean;
+  /** Workflow only: the option value that represents the initial state. */
+  initialState?: string | null;
+  /** Workflow only: allowed state-to-state transitions. */
+  transitions?: WorkflowTransition[];
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+export interface WorkflowTransition {
+  from: string;
+  to: string;
 }
 
 export interface ProgressOption {

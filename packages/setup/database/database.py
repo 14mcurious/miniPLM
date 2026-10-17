@@ -196,6 +196,17 @@ STATEMENTS = [
         'CREATE UNIQUE INDEX IF NOT EXISTS custom_type_name_uniq_idx'
         ' ON "MiniPLM"."custom_types" (lower(name))'
     ),
+    # Workflow metadata on custom types: the initial state (one of the
+    # option values) and the allowed state-to-state transitions. Meaningful
+    # only for workflow (progress) types; harmless for standard types.
+    (
+        'ALTER TABLE "MiniPLM"."custom_types"'
+        ' ADD COLUMN IF NOT EXISTS initial_state TEXT'
+    ),
+    (
+        'ALTER TABLE "MiniPLM"."custom_types"'
+        " ADD COLUMN IF NOT EXISTS transitions JSONB NOT NULL DEFAULT '[]'"
+    ),
 ]
 
 

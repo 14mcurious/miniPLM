@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { CustomType, CustomTypeOption } from "@/lib/types";
+import { CustomType, CustomTypeOption, WorkflowTransition } from "@/lib/types";
 
 const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
 
@@ -32,6 +32,10 @@ const CustomTypesManager = ({ category }: Props) => {
   const [valueType, setValueType] = useState("string");
   const [multiSelect, setMultiSelect] = useState(false);
   const [options, setOptions] = useState<CustomTypeOption[]>([]);
+  const [initialState, setInitialState] = useState<string>("");
+  const [transitions, setTransitions] = useState<WorkflowTransition[]>([]);
+  const [trFrom, setTrFrom] = useState<string>("");
+  const [trTo, setTrTo] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -77,6 +81,10 @@ const CustomTypesManager = ({ category }: Props) => {
     setValueType("string");
     setMultiSelect(false);
     setOptions([{ label: "", value: "" }]);
+    setInitialState("");
+    setTransitions([]);
+    setTrFrom("");
+    setTrTo("");
     setFormError(null);
   };
 
@@ -91,6 +99,14 @@ const CustomTypesManager = ({ category }: Props) => {
         ? type.options.map((option) => ({ ...option }))
         : [{ label: "", value: "" }]
     );
+    setInitialState(type.initialState ?? "");
+    setTransitions(
+      Array.isArray(type.transitions)
+        ? type.transitions.map((tr) => ({ ...tr }))
+        : []
+    );
+    setTrFrom("");
+    setTrTo("");
     setFormError(null);
   };
 
@@ -117,6 +133,10 @@ const CustomTypesManager = ({ category }: Props) => {
         (option) => option.value.trim() !== ""
       ),
     };
+    if (category === "workflow") {
+      payload.initialState = initialState || null;
+      payload.transitions = transitions;
+    }
     try {
       if (creating) {
         payload.operation = "create";
@@ -420,6 +440,21 @@ const CustomTypesManager = ({ category }: Props) => {
             </Button>
           </div>
 
+          {category === "workflow" && (
+            <WorkflowEditor
+              options={options}
+              initialState={initialState}
+              setInitialState={setInitialState}
+              transitions={transitions}
+              setTransitions={setTransitions}
+              trFrom={trFrom}
+              setTrFrom={setTrFrom}
+              trTo={trTo}
+              setTrTo={setTrTo}
+              busy={busy}
+            />
+          )}
+
           {formError && (
             <p role="alert" className="text-sm text-destructive">
               {formError}
@@ -506,6 +541,187 @@ const CustomTypesManager = ({ category }: Props) => {
           </tbody>
         </table>
       )}
+    </div>
+  );
+};
+
+interface WorkflowEditorProps {
+  options: CustomTypeOption[];
+  initialState: string;
+  setInitialState: (value: string) => void;
+  transitions: WorkflowTransition[];
+  setTransitions: (value: WorkflowTransition[]) => void;
+  trFrom: string;
+  setTrFrom: (value: string) => void;
+  trTo: string;
+  setTrTo: (value: string) => void;
+  busy: boolean;
+}
+
+/**
+ * Workflow-specific editor: initial state selector and the list of
+ * allowed state-to-state transitions. Shown only for workflow types.
+ */
+const WorkflowEditor = ({
+  options,
+  initialState,
+  setInitialState,
+  transitions,
+  setTransitions,
+  trFrom,
+  setTrFrom,
+  trTo,
+  setTrTo,
+  busy,
+}: WorkflowEditorProps) => {
+  const { t } = useI18n();
+  const stateValues = options
+    .map((option) => option.value.trim())
+    .filter((value) => value !== "");
+
+  const addTransition = () => {
+    if (!trFrom || !trTo) return;
+    if (transitions.some((tr) => tr.from === trFrom && tr.to === trTo)) return;
+    setTransitions([...transitions, { from: trFrom, to: trTo }]);
+    setTrFrom("");
+    setTrTo("");
+  };
+
+  const removeTransition = (index: number) => {
+    setTransitions(transitions.filter((_, i) => i !== index));
+  };
+
+  const selectClass =
+    "h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground";
+
+  return (
+    <div className="space-y-4 border-t pt-4">
+      <h3 className="text-base font-semibold text-foreground">
+        {t("ct.workflowStates")}
+      </h3>
+      <div>
+        <label
+          htmlFor="ct-initial-state"
+          className="mb-1 block text-sm font-medium text-foreground"
+        >
+          {t("ct.workflowInitialState")}
+        </label>
+        <select
+          id="ct-initial-state"
+          name="ctInitialState"
+          value={initialState}
+          onChange={(e) => setInitialState(e.target.value)}
+          disabled={busy}
+          className={selectClass}
+        >
+          <option value="">{t("ct.workflowInitialStateNone")}</option>
+          {stateValues.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {t("ct.workflowInitialStateHint")}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <span className="text-sm font-medium text-foreground">
+          {t("ct.workflowTransitions")}
+        </span>
+        <p className="text-xs text-muted-foreground">
+          {t("ct.workflowTransitionsHint")}
+        </p>
+
+        {transitions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t("ct.workflowNoTransitions")}
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {transitions.map((tr, index) => (
+              <li
+                key={`${tr.from}-${tr.to}`}
+                className="flex items-center gap-2 rounded-md border p-2 text-sm text-foreground"
+              >
+                <span className="font-medium">{tr.from}</span>
+                <span className="text-muted-foreground">→</span>
+                <span className="font-medium">{tr.to}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  type="button"
+                  className="ml-auto"
+                  onClick={() => removeTransition(index)}
+                  disabled={busy}
+                >
+                  {t("wa.remove")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="ct-transition-from"
+              className="text-xs text-muted-foreground"
+            >
+              {t("ct.workflowTransitionFrom")}
+            </label>
+            <select
+              id="ct-transition-from"
+              name="ctTransitionFrom"
+              value={trFrom}
+              onChange={(e) => setTrFrom(e.target.value)}
+              disabled={busy || stateValues.length === 0}
+              className={selectClass}
+            >
+              <option value="">—</option>
+              {stateValues.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="ct-transition-to"
+              className="text-xs text-muted-foreground"
+            >
+              {t("ct.workflowTransitionTo")}
+            </label>
+            <select
+              id="ct-transition-to"
+              name="ctTransitionTo"
+              value={trTo}
+              onChange={(e) => setTrTo(e.target.value)}
+              disabled={busy || stateValues.length === 0}
+              className={selectClass}
+            >
+              <option value="">—</option>
+              {stateValues.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            type="button"
+            onClick={addTransition}
+            disabled={busy || !trFrom || !trTo}
+            className="h-10"
+          >
+            {t("ct.workflowAddTransition")}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 };

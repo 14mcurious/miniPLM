@@ -102,11 +102,6 @@ const WorkAreaProject = () => {
       desc: t("wa.workInstancesDesc"),
     },
     {
-      to: `${base}/work-instances-configuration`,
-      title: t("wa.workInstanceConfiguration"),
-      desc: t("wa.workInstanceConfigurationDesc"),
-    },
-    {
       to: `${base}/templates`,
       title: t("wa.templates"),
       desc: t("wa.templatesDesc"),

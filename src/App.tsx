@@ -19,6 +19,8 @@ import WorkAreaWorkspaces from "./pages/WorkAreaWorkspaces";
 import WorkAreaContainers from "./pages/WorkAreaContainers";
 import WorkAreaContainerDetail from "./pages/WorkAreaContainerDetail";
 import WorkAreaInstances from "./pages/WorkAreaInstances";
+import WorkAreaInstanceNew from "./pages/WorkAreaInstanceNew";
+import WorkAreaInstanceConfiguration from "./pages/WorkAreaInstanceConfiguration";
 import WorkAreaInstanceDetail from "./pages/WorkAreaInstanceDetail";
 import WorkAreaTemplates from "./pages/WorkAreaTemplates";
 import WorkAreaSearch from "./pages/WorkAreaSearch";
@@ -285,6 +287,22 @@ const App = () => (
                 element={
                   <RequireAuth>
                     <WorkAreaInstances />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-instances/new"
+                element={
+                  <RequireAuth>
+                    <WorkAreaInstanceNew />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-instances-configuration"
+                element={
+                  <RequireAuth>
+                    <WorkAreaInstanceConfiguration />
                   </RequireAuth>
                 }
               />

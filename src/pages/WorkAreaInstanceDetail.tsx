@@ -259,7 +259,7 @@ const WorkAreaInstanceDetail = () => {
                 <Button
                   variant="outline"
                   onClick={() =>
-                    navigate(`${base}/work-instances?edit=${instance.id}`)
+                    navigate(`${base}/work-instances-configuration?edit=${instance.id}`)
                   }
                 >
                   {t("wa.edit")}

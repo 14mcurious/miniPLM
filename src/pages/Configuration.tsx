@@ -42,6 +42,12 @@ const SECTIONS: ConfigSection[] = [
     descriptionKey: "searchColumnsConfig.description",
     openKey: "searchColumnsConfig.open",
   },
+  {
+    to: "/administration/configuration/templates",
+    titleKey: "templatesConfig.title",
+    descriptionKey: "templatesConfig.description",
+    openKey: "templatesConfig.open",
+  },
 ];
 
 const Configuration = () => {

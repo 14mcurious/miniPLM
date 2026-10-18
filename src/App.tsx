@@ -16,12 +16,11 @@ import Administration from "./pages/Administration";
 import WorkArea from "./pages/WorkArea";
 import WorkAreaProject from "./pages/WorkAreaProject";
 import WorkAreaWorkspaces from "./pages/WorkAreaWorkspaces";
-import WorkAreaContainers from "./pages/WorkAreaContainers";
+import WorkAreaWorkspaceDetail from "./pages/WorkAreaWorkspaceDetail";
 import WorkAreaContainerDetail from "./pages/WorkAreaContainerDetail";
-import WorkAreaInstances from "./pages/WorkAreaInstances";
 import WorkAreaInstanceNew from "./pages/WorkAreaInstanceNew";
 import WorkAreaInstanceDetail from "./pages/WorkAreaInstanceDetail";
-import WorkAreaTemplates from "./pages/WorkAreaTemplates";
+import WorkInstanceTemplates from "./pages/WorkInstanceTemplates";
 import WorkAreaSearch from "./pages/WorkAreaSearch";
 import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
@@ -38,6 +37,10 @@ import ProjectEdit from "./pages/ProjectEdit";
 import Configuration from "./pages/Configuration";
 import CustomTypesConfiguration from "./pages/CustomTypesConfiguration";
 import WorkflowConfiguration from "./pages/WorkflowConfiguration";
+import WorkflowRoles from "./pages/WorkflowRoles";
+import WorkflowRoleLists from "./pages/WorkflowRoleLists";
+import WorkflowProgressTypes from "./pages/WorkflowProgressTypes";
+import WorkflowProgressTypeEdit from "./pages/WorkflowProgressTypeEdit";
 import SearchColumnsConfiguration from "./pages/SearchColumnsConfiguration";
 import SecuritySettings from "./pages/SecuritySettings";
 import ProjectSettings from "./pages/ProjectSettings";
@@ -208,6 +211,46 @@ const App = () => (
                 }
               />
               <Route
+                path="/administration/configuration/workflow/roles"
+                element={
+                  <RequireAdmin>
+                    <WorkflowRoles />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/workflow/role-lists"
+                element={
+                  <RequireAdmin>
+                    <WorkflowRoleLists />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/workflow/progress-types"
+                element={
+                  <RequireAdmin>
+                    <WorkflowProgressTypes />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/workflow/progress-types/new"
+                element={
+                  <RequireAdmin>
+                    <WorkflowProgressTypeEdit />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/workflow/progress-types/:typeId/edit"
+                element={
+                  <RequireAdmin>
+                    <WorkflowProgressTypeEdit />
+                  </RequireAdmin>
+                }
+              />
+              <Route
                 path="/administration/configuration/custom-types"
                 element={
                   <RequireAdmin>
@@ -220,6 +263,14 @@ const App = () => (
                 element={
                   <RequireAdmin>
                     <SearchColumnsConfiguration />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/administration/configuration/templates"
+                element={
+                  <RequireAdmin>
+                    <WorkInstanceTemplates />
                   </RequireAdmin>
                 }
               />
@@ -266,10 +317,18 @@ const App = () => (
                 }
               />
               <Route
-                path="/work-area/:projectId/work-containers"
+                path="/work-area/:projectId/workspaces/:workspaceId"
                 element={
                   <RequireAuth>
-                    <WorkAreaContainers />
+                    <WorkAreaWorkspaceDetail />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/workspaces/:workspaceId/work-instances/new"
+                element={
+                  <RequireAuth>
+                    <WorkAreaInstanceNew />
                   </RequireAuth>
                 }
               />
@@ -282,34 +341,10 @@ const App = () => (
                 }
               />
               <Route
-                path="/work-area/:projectId/work-instances"
-                element={
-                  <RequireAuth>
-                    <WorkAreaInstances />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/work-instances/new"
-                element={
-                  <RequireAuth>
-                    <WorkAreaInstanceNew />
-                  </RequireAuth>
-                }
-              />
-              <Route
                 path="/work-area/:projectId/work-instances/:instanceId"
                 element={
                   <RequireAuth>
                     <WorkAreaInstanceDetail />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/templates"
-                element={
-                  <RequireAuth>
-                    <WorkAreaTemplates />
                   </RequireAuth>
                 }
               />

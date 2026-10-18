@@ -1,16 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { CustomType, CustomTypeOption, WorkflowTransition, Role, RoleList } from "@/lib/types";
+import WorkflowEditor, { RoleListRef } from "@/pages/config/WorkflowEditor";
+import CustomTypeFormFields from "@/pages/config/CustomTypeFormFields";
 
 const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
+
+const VALUE_TYPES = new Set(["string", "number", "date"]);
 
 interface Props {
   /** "standard" or "workflow" (progress types). */
   category: "standard" | "workflow";
+  /**
+   * When provided, "New" and "Edit" navigate to dedicated pages instead of
+   * opening the inline form (used by the workflow progress types page).
+   */
+  editorRoutes?: { new: string; edit: (id: number) => string };
 }
 
 /**
@@ -19,7 +28,7 @@ interface Props {
  * enumerated values of the type (label + value), validated by the backend
  * against the declared base type (number/date/string).
  */
-const CustomTypesManager = ({ category }: Props) => {
+const CustomTypesManager = ({ category, editorRoutes }: Props) => {
   const { t } = useI18n();
   const [types, setTypes] = useState<CustomType[]>([]);
   const [progressType, setProgressType] = useState<string | null>(null);
@@ -35,12 +44,11 @@ const CustomTypesManager = ({ category }: Props) => {
   const [initialState, setInitialState] = useState<string>("");
   const [transitions, setTransitions] = useState<WorkflowTransition[]>([]);
   const [roleListId, setRoleListId] = useState<number | null>(null);
-  const [trFrom, setTrFrom] = useState<string>("");
-  const [trTo, setTrTo] = useState<string>("");
-  const [trRole, setTrRole] = useState<string>("");
-  const [roleListsData, setRoleListsData] = useState<{ id: number; name: string }[]>([]);
+  const [roleLists, setRoleLists] = useState<RoleListRef[]>([]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const translate = (err: unknown): string => {
     if (err instanceof ApiError && err.serverKey) {
@@ -66,10 +74,13 @@ const CustomTypesManager = ({ category }: Props) => {
       );
       if (category === "workflow") {
         setProgressType(data.workflowProgressType ?? null);
-        // Extract role names from the selected role list (if any)
-        // For now, just use all roles from all role lists
-        const allRoles = data.roleLists?.flatMap(rl => rl.members) || [];
-        setRoleListsData(allRoles);
+        setRoleLists(
+          (data.roleLists ?? []).map((rl) => ({
+            id: rl.id,
+            name: rl.name,
+            members: (rl.members ?? []).map((m) => ({ id: m.id, name: m.name })),
+          }))
+        );
       }
     } catch (err) {
       setError(translate(err));
@@ -93,8 +104,6 @@ const CustomTypesManager = ({ category }: Props) => {
     setInitialState("");
     setTransitions([]);
     setRoleListId(null);
-    setTrFrom("");
-    setTrTo("");
     setFormError(null);
   };
 
@@ -110,14 +119,19 @@ const CustomTypesManager = ({ category }: Props) => {
         : [{ label: "", value: "" }]
     );
     setInitialState(type.initialState ?? "");
+    // The matrix holds one entry per (from, to) pair: keep the first one.
+    const seenPairs = new Set<string>();
     setTransitions(
-      Array.isArray(type.transitions)
-        ? type.transitions.map((tr) => ({ ...tr }))
-        : []
+      (Array.isArray(type.transitions) ? type.transitions : [])
+        .filter((tr) => {
+          const key = `${tr.from}\u2192${tr.to}`;
+          if (seenPairs.has(key)) return false;
+          seenPairs.add(key);
+          return true;
+        })
+        .map((tr) => ({ ...tr }))
     );
     setRoleListId(type.roleListId ?? null);
-    setTrFrom("");
-    setTrTo("");
     setFormError(null);
   };
 
@@ -226,7 +240,222 @@ const CustomTypesManager = ({ category }: Props) => {
     }
   };
 
-  const labelClass = "mb-1 block text-sm font-medium text-foreground";
+  /** Export a single workflow progress type as a downloadable JSON file. */
+  const exportProgressType = (type: CustomType) => {
+    const payload = {
+      app: "miniplm",
+      resource: "progress-type",
+      exportedAt: new Date().toISOString(),
+      progressType: {
+        id: type.id,
+        name: type.name,
+        valueType: type.valueType,
+        multiSelect: type.multiSelect,
+        options: (type.options ?? []).map((o) => ({ ...o })),
+        initialState: type.initialState ?? null,
+        transitions: (type.transitions ?? []).map((tr) => ({ ...tr })),
+        roleList: type.roleListName ? { name: type.roleListName } : null,
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    const slug = type.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    anchor.download = `miniplm-progress-type-${slug || type.id}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Import a single workflow progress type from a JSON file (the exported
+   * format, or a plain object). The type is matched by name
+   * (case-insensitive): created when missing, updated when present. The
+   * optional role list is resolved by name against the existing lists.
+   */
+  const importProgressType = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.confirm(t("ct.importProgressTypeConfirm"))) return;
+    setImporting(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      const src =
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { progressType?: unknown }).progressType !== undefined
+          ? (parsed as { progressType: unknown }).progressType
+          : parsed;
+      if (!src || typeof src !== "object") {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      const it = src as {
+        name?: unknown;
+        valueType?: unknown;
+        multiSelect?: unknown;
+        options?: unknown;
+        initialState?: unknown;
+        transitions?: unknown;
+        roleList?: unknown;
+      };
+      const name = typeof it.name === "string" ? it.name.trim() : "";
+      const TYPE_NAME_RE = /^[A-Za-z][A-Za-z0-9 ]{0,79}$/;
+      const valueType =
+        typeof it.valueType === "string"
+          ? it.valueType.trim().toLowerCase()
+          : "string";
+      if (
+        !name ||
+        !TYPE_NAME_RE.test(name) ||
+        !VALUE_TYPES.has(valueType) ||
+        !Array.isArray(it.options) ||
+        it.options.length === 0
+      ) {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      const options = it.options.map((o) => {
+        const opt = (o ?? {}) as { value?: unknown; label?: unknown };
+        return {
+          value: typeof opt.value === "string" ? opt.value.trim() : "",
+          label:
+            typeof opt.label === "string" && opt.label.trim() !== ""
+              ? opt.label.trim()
+              : typeof opt.value === "string"
+                ? opt.value.trim()
+                : "",
+        };
+      });
+      if (options.some((o) => o.value === "")) {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      const optionValues = new Set(options.map((o) => o.value));
+      const initialStateRaw = it.initialState;
+      const initialState =
+        typeof initialStateRaw === "string" && initialStateRaw.trim() !== ""
+          ? initialStateRaw.trim()
+          : null;
+      if (initialState !== null && !optionValues.has(initialState)) {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      // Resolve the optional role list by name.
+      let roleListId: number | null = null;
+      if (it.roleList !== undefined && it.roleList !== null) {
+        const rlName =
+          typeof it.roleList === "string"
+            ? it.roleList.trim()
+            : it.roleList &&
+                typeof it.roleList === "object" &&
+                typeof (it.roleList as { name?: unknown }).name === "string"
+              ? ((it.roleList as { name: string }).name).trim()
+              : "";
+        const match = roleLists.find(
+          (rl) => rl.name.toLowerCase() === rlName.toLowerCase()
+        );
+        if (!match) {
+          toast.error(
+            t("ct.importProgressTypeMissingRoleList", { name: rlName })
+          );
+          return;
+        }
+        roleListId = match.id;
+      }
+      // Validate transitions against option values and the list roles.
+      if (!Array.isArray(it.transitions)) {
+        toast.error(t("ct.importProgressTypeInvalid"));
+        return;
+      }
+      const listRoleNames = new Set(
+        roleListId !== null
+          ? (roleLists.find((rl) => rl.id === roleListId)?.members ?? [])
+              .map((m) => m.name)
+          : []
+      );
+      const transitions: WorkflowTransition[] = [];
+      for (const raw of it.transitions) {
+        const tr = (raw ?? {}) as {
+          from?: unknown;
+          to?: unknown;
+          role?: unknown;
+        };
+        const from = typeof tr.from === "string" ? tr.from.trim() : "";
+        const to = typeof tr.to === "string" ? tr.to.trim() : "";
+        const role =
+          typeof tr.role === "string" && tr.role.trim() !== ""
+            ? tr.role.trim()
+            : null;
+        if (!from || !to || !optionValues.has(from) || !optionValues.has(to)) {
+          toast.error(t("ct.importProgressTypeInvalid"));
+          return;
+        }
+        if (role !== null && !listRoleNames.has(role)) {
+          toast.error(t("ct.importProgressTypeInvalid"));
+          return;
+        }
+        transitions.push({ from, to, role });
+      }
+      const multiSelect = Boolean(it.multiSelect);
+      const payload = {
+        name,
+        valueType,
+        multiSelect,
+        options,
+        initialState,
+        transitions,
+        roleListId,
+      };
+      const existing = types.find(
+        (ty) =>
+          ty.category === "workflow" &&
+          ty.name.toLowerCase() === name.toLowerCase()
+      );
+      if (existing) {
+        await api(CUSTOM_TYPES_ENDPOINT, {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "update",
+            id: existing.id,
+            ...payload,
+          }),
+        });
+      } else {
+        await api(CUSTOM_TYPES_ENDPOINT, {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "create",
+            category: "workflow",
+            ...payload,
+          }),
+        });
+      }
+      toast.success(t("ct.importProgressTypeOk"));
+      await load();
+    } catch (err) {
+      toast.error(translate(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const shown = types;
 
   return (
@@ -237,10 +466,37 @@ const CustomTypesManager = ({ category }: Props) => {
             ? t("ct.workflowTitle")
             : t("ct.standardTitle")}
         </h2>
-        <Button size="sm" onClick={openCreate} disabled={busy}>
-          {t("ct.new")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {category === "workflow" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => fileRef.current?.click()}
+              disabled={loading || importing || busy}
+            >
+              {t("ct.importProgressType")}
+            </Button>
+          )}
+          {editorRoutes ? (
+            <Button asChild size="sm" disabled={busy}>
+              <Link to={editorRoutes.new}>{t("ct.new")}</Link>
+            </Button>
+          ) : (
+            <Button size="sm" onClick={openCreate} disabled={busy}>
+              {t("ct.new")}
+            </Button>
+          )}
+        </div>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        id="progress-type-import-file"
+        name="progressTypeImportFile"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => void importProgressType(e)}
+      />
       <p className="text-sm text-muted-foreground">
         {category === "workflow"
           ? t("ct.workflowHint")
@@ -297,160 +553,17 @@ const CustomTypesManager = ({ category }: Props) => {
           <h3 className="text-base font-semibold text-foreground">
             {creating ? t("ct.newTitle") : t("ct.editTitle")}
           </h3>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div>
-              <label htmlFor="ct-name" className={labelClass}>
-                {t("ct.name")}
-              </label>
-              <Input
-                id="ct-name"
-                name="ctName"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-            <div>
-              <label htmlFor="ct-value-type" className={labelClass}>
-                {t("ct.valueType")}
-              </label>
-              <select
-                id="ct-value-type"
-                name="ctValueType"
-                value={valueType}
-                onChange={(e) => setValueType(e.target.value)}
-                disabled={busy}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-              >
-                <option value="string">{t("ct.valueTypeString")}</option>
-                <option value="number">{t("ct.valueTypeNumber")}</option>
-                <option value="date">{t("ct.valueTypeDate")}</option>
-              </select>
-            </div>
-            <div className="flex items-end pb-1">
-              <label className="flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  id="ct-multi-select"
-                  name="ctMultiSelect"
-                  checked={multiSelect}
-                  onChange={(e) => setMultiSelect(e.target.checked)}
-                  disabled={busy}
-                  className="h-4 w-4 rounded border-input"
-                />
-                {t("ct.multiSelect")}
-              </label>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <span className="text-sm font-medium text-foreground">
-              {t("ct.options")}
-            </span>
-            {options.map((option, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-2"
-              >
-                <div className="flex flex-col gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    aria-label={t("ct.moveUp")}
-                    title={t("ct.moveUp")}
-                    onClick={() =>
-                      setOptions((prev) => {
-                        if (index <= 0) return prev;
-                        const next = [...prev];
-                        [next[index - 1], next[index]] = [
-                          next[index],
-                          next[index - 1],
-                        ];
-                        return next;
-                      })
-                    }
-                    disabled={busy || index === 0}
-                    className="h-7 w-8 px-0"
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    type="button"
-                    aria-label={t("ct.moveDown")}
-                    title={t("ct.moveDown")}
-                    onClick={() =>
-                      setOptions((prev) => {
-                        if (index >= prev.length - 1) return prev;
-                        const next = [...prev];
-                        [next[index + 1], next[index]] = [
-                          next[index],
-                          next[index + 1],
-                        ];
-                        return next;
-                      })
-                    }
-                    disabled={busy || index === options.length - 1}
-                    className="h-7 w-8 px-0"
-                  >
-                    ↓
-                  </Button>
-                </div>
-                <Input
-                  id={`ct-option-value-${index}`}
-                  name={`ctOptionValue${index}`}
-                  placeholder={t("ct.optionValue")}
-                  value={option.value}
-                  onChange={(e) =>
-                    setOptions((prev) =>
-                      prev.map((item, i) =>
-                        i === index ? { ...item, value: e.target.value } : item
-                      )
-                    )
-                  }
-                  disabled={busy}
-                />
-                <Input
-                  id={`ct-option-label-${index}`}
-                  name={`ctOptionLabel${index}`}
-                  placeholder={t("ct.optionLabel")}
-                  value={option.label}
-                  onChange={(e) =>
-                    setOptions((prev) =>
-                      prev.map((item, i) =>
-                        i === index ? { ...item, label: e.target.value } : item
-                      )
-                    )
-                  }
-                  disabled={busy}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  onClick={() =>
-                    setOptions((prev) => prev.filter((_, i) => i !== index))
-                  }
-                  disabled={busy || options.length <= 1}
-                >
-                  {t("wa.remove")}
-                </Button>
-              </div>
-            ))}
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              onClick={() =>
-                setOptions((prev) => [...prev, { label: "", value: "" }])
-              }
-              disabled={busy}
-            >
-              {t("ct.addOption")}
-            </Button>
-          </div>
+          <CustomTypeFormFields
+            name={name}
+            setName={setName}
+            valueType={valueType}
+            setValueType={setValueType}
+            multiSelect={multiSelect}
+            setMultiSelect={setMultiSelect}
+            options={options}
+            setOptions={setOptions}
+            busy={busy}
+          />
 
           {category === "workflow" && (
             <WorkflowEditor
@@ -459,13 +572,9 @@ const CustomTypesManager = ({ category }: Props) => {
               setInitialState={setInitialState}
               transitions={transitions}
               setTransitions={setTransitions}
-              trFrom={trFrom}
-              setTrFrom={setTrFrom}
-              trTo={trTo}
-              setTrTo={setTrTo}
-              trRole={trRole}
-              setTrRole={setTrRole}
-              roles={roleListsData}
+              roleListId={roleListId}
+              setRoleListId={setRoleListId}
+              roleLists={roleLists}
               busy={busy}
             />
           )}
@@ -528,13 +637,35 @@ const CustomTypesManager = ({ category }: Props) => {
                 </td>
                 <td className="px-2 py-2 text-right">
                   <div className="flex justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openEdit(type)}
-                    >
-                      {t("wa.edit")}
-                    </Button>
+                    {category === "workflow" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => exportProgressType(type)}
+                      >
+                        {t("ct.exportProgressType")}
+                      </Button>
+                    )}
+                    {editorRoutes ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        asChild
+                        disabled={busy}
+                      >
+                        <Link to={editorRoutes.edit(type.id)}>
+                          {t("wa.edit")}
+                        </Link>
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEdit(type)}
+                      >
+                        {t("wa.edit")}
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -556,248 +687,6 @@ const CustomTypesManager = ({ category }: Props) => {
           </tbody>
         </table>
       )}
-    </div>
-  );
-};
-
-interface WorkflowEditorProps {
-  options: CustomTypeOption[];
-  initialState: string;
-  setInitialState: (value: string) => void;
-  transitions: WorkflowTransition[];
-  setTransitions: (value: WorkflowTransition[]) => void;
-  trFrom: string;
-  setTrFrom: (value: string) => void;
-  trTo: string;
-  setTrTo: (value: string) => void;
-  trRole: string;
-  setTrRole: (value: string) => void;
-  roles: { id: number; name: string }[];
-  busy: boolean;
-}
-
-/**
- * Workflow-specific editor: initial state selector and the list of
- * allowed state-to-state transitions. Shown only for workflow types.
- */
-const WorkflowEditor = ({
-  options,
-  initialState,
-  setInitialState,
-  transitions,
-  setTransitions,
-  trFrom,
-  setTrFrom,
-  trTo,
-  setTrTo,
-  trRole,
-  setTrRole,
-  roles,
-  busy,
-}: WorkflowEditorProps) => {
-  const { t } = useI18n();
-  const stateValues = options
-    .map((option) => option.value.trim())
-    .filter((value) => value !== "");
-
-  const addTransition = () => {
-    if (!trFrom || !trTo) return;
-    if (transitions.some((tr) => tr.from === trFrom && tr.to === trTo && tr.role === trRole)) return;
-    setTransitions([...transitions, { from: trFrom, to: trTo, role: trRole || null }]);
-    setTrFrom("");
-    setTrTo("");
-    setTrRole("");
-  };
-
-  const removeTransition = (index: number) => {
-    setTransitions(transitions.filter((_, i) => i !== index));
-  };
-
-  const selectClass =
-    "h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground";
-
-  return (
-    <div className="space-y-4 border-t pt-4">
-      <h3 className="text-base font-semibold text-foreground">
-        {t("ct.workflowStates")}
-      </h3>
-      <div>
-        <label
-          htmlFor="ct-initial-state"
-          className="mb-1 block text-sm font-medium text-foreground"
-        >
-          {t("ct.workflowInitialState")}
-        </label>
-        <select
-          id="ct-initial-state"
-          name="ctInitialState"
-          value={initialState}
-          onChange={(e) => setInitialState(e.target.value)}
-          disabled={busy}
-          className={selectClass}
-        >
-          <option value="">{t("ct.workflowInitialStateNone")}</option>
-          {stateValues.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t("ct.workflowInitialStateHint")}
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <span className="text-sm font-medium text-foreground">
-          {t("ct.workflowTransitions")}
-        </span>
-        <p className="text-xs text-muted-foreground">
-          {t("ct.workflowTransitionsHint")}
-        </p>
-
-        {transitions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {t("ct.workflowNoTransitions")}
-          </p>
-        ) : (
-          <ul className="space-y-1">
-            {transitions.map((tr, index) => (
-              <li
-                key={`${tr.from}-${tr.to}-${tr.role || "none"}`}
-                className="flex items-center gap-2 rounded-md border p-2 text-sm text-foreground"
-              >
-                <span className="font-medium">{tr.from}</span>
-                <span className="text-muted-foreground">→</span>
-                <span className="font-medium">{tr.to}</span>
-                <span className="text-muted-foreground">:</span>
-                <span className={tr.role ? "text-primary" : "text-muted-foreground"}>
-                  {tr.role || t("ct.roleAny")}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  className="ml-auto"
-                  onClick={() => removeTransition(index)}
-                  disabled={busy}
-                >
-                  {t("wa.remove")}
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <label
-              htmlFor="ct-transition-from"
-              className="text-xs text-muted-foreground"
-            >
-              {t("ct.workflowTransitionFrom")}
-            </label>
-            <select
-              id="ct-transition-from"
-              name="ctTransitionFrom"
-              value={trFrom}
-              onChange={(e) => setTrFrom(e.target.value)}
-              disabled={busy || stateValues.length === 0}
-              className={selectClass}
-            >
-              <option value="">—</option>
-              {stateValues.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label
-              htmlFor="ct-transition-to"
-              className="text-xs text-muted-foreground"
-            >
-              {t("ct.workflowTransitionTo")}
-            </label>
-            <select
-              id="ct-transition-to"
-              name="ctTransitionTo"
-              value={trTo}
-              onChange={(e) => setTrTo(e.target.value)}
-              disabled={busy || stateValues.length === 0}
-              className={selectClass}
-            >
-              <option value="">—</option>
-              {stateValues.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label
-              htmlFor="ct-transition-role"
-              className="text-xs text-muted-foreground"
-            >
-              {t("ct.roleForTransition")}
-            </label>
-            <select
-              id="ct-transition-role"
-              name="ctTransitionRole"
-              value={trRole}
-              onChange={(e) => setTrRole(e.target.value)}
-              disabled={busy || roles.length === 0}
-              className={selectClass}
-            >
-              <option value="">{t("ct.roleAny")}</option>
-              {roles.map((role) => (
-                <option key={role.id} value={role.name}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            type="button"
-            onClick={addTransition}
-            disabled={busy || !trFrom || !trTo}
-            className="h-10"
-          >
-            {t("ct.workflowAddTransition")}
-          </Button>
-        </div>
-      </div>
-
-      <div>
-        <label
-          htmlFor="ct-role-list"
-          className="mb-1 block text-sm font-medium text-foreground"
-        >
-          {t("ct.roleList")}
-        </label>
-        <select
-          id="ct-role-list"
-          name="ctRoleList"
-          value={roleListId ?? ""}
-          onChange={(e) => setRoleListId(e.target.value ? Number(e.target.value) : null)}
-          disabled={busy}
-          className={selectClass}
-        >
-          <option value="">— {t("ct.roleAny")} —</option>
-          {roleListsData.map((rl) => (
-            <option key={rl.id} value={rl.id}>
-              {rl.name}
-            </option>
-          ))}
-        </select>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t("ct.workflowTransitionsHint")}
-        </p>
-      </div>
     </div>
   );
 };

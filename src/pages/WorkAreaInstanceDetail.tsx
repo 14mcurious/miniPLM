@@ -9,11 +9,13 @@ import { Button } from "@/components/ui/button";
 import {
   AttachmentValue,
   UserRef,
+  WorkContainer,
   WorkInstance,
   WorkInstanceField,
 } from "@/lib/types";
 
 const INSTANCES_ENDPOINT = "/api/my/v1/work-instances";
+const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
 const ATTACHMENTS_ENDPOINT = "/api/my/v1/attachments";
 
 const formatDate = (value: string | null): string =>
@@ -60,6 +62,9 @@ const WorkAreaInstanceDetail = () => {
   const navigate = useNavigate();
 
   const [instance, setInstance] = useState<WorkInstance | null>(null);
+  const [containerWorkspaceId, setContainerWorkspaceId] = useState<
+    number | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -75,14 +80,30 @@ const WorkAreaInstanceDetail = () => {
     setLoading(true);
     setNotFound(false);
     try {
-      const data = await api<{ workInstance: WorkInstance }>(
-        INSTANCES_ENDPOINT,
-        {
+      const [data, containersData] = await Promise.all([
+        api<{ workInstance: WorkInstance }>(INSTANCES_ENDPOINT, {
           method: "POST",
           body: JSON.stringify({ operation: "get", id: Number(instanceId) }),
-        }
-      );
-      setInstance(data.workInstance ?? null);
+        }),
+        projectId
+          ? api<{ workContainers: WorkContainer[] }>(CONTAINERS_ENDPOINT, {
+              method: "POST",
+              body: JSON.stringify({
+                operation: "list",
+                projectId: Number(projectId),
+              }),
+            })
+          : Promise.resolve({ workContainers: [] }),
+      ]);
+      const foundInstance = data.workInstance ?? null;
+      setInstance(foundInstance);
+      if (foundInstance) {
+        const container = containersData.workContainers?.find(
+          (item) =>
+            String(item.id) === String(foundInstance.workContainerId)
+        );
+        setContainerWorkspaceId(container?.workspaceId ?? null);
+      }
     } catch (err) {
       const key = err instanceof ApiError ? err.serverKey : null;
       if (
@@ -161,7 +182,14 @@ const WorkAreaInstanceDetail = () => {
 
   return (
     <>
-      <BackLink to={`${base}/work-instances`} label={t("wa.workInstances")} />
+      <BackLink
+        to={
+          containerWorkspaceId != null
+            ? `${base}/workspaces/${containerWorkspaceId}`
+            : `${base}/workspaces`
+        }
+        label={t("wa.workspace")}
+      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-4xl">
           {loading ? (
@@ -259,7 +287,11 @@ const WorkAreaInstanceDetail = () => {
                 <Button
                   variant="outline"
                   onClick={() =>
-                    navigate(`${base}/work-instances?edit=${instance.id}`)
+                    navigate(
+                      containerWorkspaceId != null
+                        ? `${base}/workspaces/${containerWorkspaceId}?edit=${instance.id}`
+                        : `${base}/workspaces`
+                    )
                   }
                 >
                   {t("wa.edit")}

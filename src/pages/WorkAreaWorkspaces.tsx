@@ -268,6 +268,11 @@ const WorkAreaWorkspaces = () => {
                   depth={0}
                   isExpanded={isExpanded}
                   onToggle={toggleExpanded}
+                  onOpen={(workspace) =>
+                    navigate(
+                      `/work-area/${projectId}/workspaces/${workspace.id}`
+                    )
+                  }
                   onCreateChild={openCreate}
                   onEdit={openUpdate}
                   onDelete={async (workspace) => {
@@ -307,6 +312,7 @@ interface TreeNodeProps {
   depth: number;
   isExpanded: (id: number) => boolean;
   onToggle: (id: number) => void;
+  onOpen: (workspace: Workspace) => void;
   onCreateChild: (parentId: number | null) => void;
   onEdit: (workspace: Workspace) => void;
   onDelete: (workspace: Workspace) => void;
@@ -317,6 +323,7 @@ const TreeNode = ({
   depth,
   isExpanded,
   onToggle,
+  onOpen,
   onCreateChild,
   onEdit,
   onDelete,
@@ -347,6 +354,9 @@ const TreeNode = ({
           <span className="text-sm text-muted-foreground">— {workspace.title}</span>
         )}
         <span className="ml-auto flex flex-wrap gap-2 text-xs">
+          <Button size="sm" variant="outline" onClick={() => onOpen(workspace)}>
+            {t("wa.openWorkspace")}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => onCreateChild(workspace.id)}>
             {t("wa.newChild")}
           </Button>
@@ -367,6 +377,7 @@ const TreeNode = ({
               depth={depth + 1}
               isExpanded={isExpanded}
               onToggle={onToggle}
+              onOpen={onOpen}
               onCreateChild={onCreateChild}
               onEdit={onEdit}
               onDelete={onDelete}

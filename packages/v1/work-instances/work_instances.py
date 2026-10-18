@@ -499,12 +499,16 @@ def do_create(ctx, session, data):
         if project_id not in modes or "C" not in modes.get(project_id, set()):
             return fail("forbidden")
         cur.execute(
-            'SELECT id, project_id FROM "MiniPLM"."work_containers" WHERE id = %s',
+            'SELECT id, project_id, workspace_id FROM "MiniPLM"."work_containers" WHERE id = %s',
             (container_id,),
         )
         container_row = cur.fetchone()
         if not container_row or container_row[1] != project_id:
             return fail("workInstances.error.containerNotFound")
+        # Work instances are always created inside a work container that
+        # belongs to a work space.
+        if container_row[2] is None:
+            return fail("workInstances.error.containerWithoutWorkspace")
         if raw_template not in (None, ""):
             template = fetch_template(cur, template_id)
             if template is None or template["projectId"] != project_id:

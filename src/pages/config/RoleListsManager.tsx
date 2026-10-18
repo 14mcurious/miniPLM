@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -24,6 +24,8 @@ const RoleListsManager = () => {
   const [selectedRoles, setSelectedRoles] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const translate = (err: unknown): string => {
     if (err instanceof ApiError && err.serverKey) {
@@ -144,18 +146,172 @@ const RoleListsManager = () => {
     }
   };
 
+  /** Export a single role list as a downloadable JSON file. */
+  const exportRoleList = (list: RoleList) => {
+    const payload = {
+      app: "miniplm",
+      resource: "role-list",
+      exportedAt: new Date().toISOString(),
+      roleList: {
+        id: list.id,
+        name: list.name,
+        roles: list.members.map((m) => ({ id: m.id, name: m.name })),
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    const slug = list.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    anchor.download = `miniplm-role-list-${slug || list.id}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  /**
+   * Import a single role list from a JSON file (the exported format, or a
+   * plain object with name and roles). The list is matched by name
+   * (case-insensitive): created when missing, members updated when present.
+   * Roles are resolved by name against the system roles.
+   */
+  const importRoleList = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.confirm(t("ct.importRoleListConfirm"))) return;
+    setImporting(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        toast.error(t("ct.importRoleListInvalid"));
+        return;
+      }
+      const src =
+        parsed &&
+        typeof parsed === "object" &&
+        (parsed as { roleList?: unknown }).roleList !== undefined
+          ? (parsed as { roleList: unknown }).roleList
+          : parsed;
+      if (!src || typeof src !== "object") {
+        toast.error(t("ct.importRoleListInvalid"));
+        return;
+      }
+      const it = src as { name?: unknown; roles?: unknown };
+      const nm = typeof it.name === "string" ? it.name.trim() : "";
+      if (!nm || nm.length > 100 || !Array.isArray(it.roles)) {
+        toast.error(t("ct.importRoleListInvalid"));
+        return;
+      }
+      // Resolve role names (case-insensitive) against the system roles.
+      const byName = new Map(
+        roles.map((r) => [r.name.toLowerCase(), r.id])
+      );
+      const roleIds = new Set<number>();
+      const missing: string[] = [];
+      for (const item of it.roles) {
+        const rn =
+          typeof item === "string"
+            ? item.trim()
+            : item &&
+                typeof item === "object" &&
+                typeof (item as { name?: unknown }).name === "string"
+              ? ((item as { name: string }).name).trim()
+              : "";
+        if (!rn) {
+          toast.error(t("ct.importRoleListInvalid"));
+          return;
+        }
+        const rid = byName.get(rn.toLowerCase());
+        if (rid === undefined) missing.push(rn);
+        else roleIds.add(rid);
+      }
+      if (missing.length > 0) {
+        toast.error(
+          t("ct.importRoleListMissingRoles", {
+            names: [...new Set(missing)].join(", "),
+          })
+        );
+        return;
+      }
+      const members = [...roleIds];
+      const existing = roleLists.find(
+        (l) => l.name.toLowerCase() === nm.toLowerCase()
+      );
+      if (existing) {
+        await api(CUSTOM_TYPES_ENDPOINT, {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "set-role-list-members",
+            id: existing.id,
+            members,
+          }),
+        });
+      } else {
+        const res = await api<{ roleListId: number }>(CUSTOM_TYPES_ENDPOINT, {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "create-role-list",
+            name: nm,
+          }),
+        });
+        await api(CUSTOM_TYPES_ENDPOINT, {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "set-role-list-members",
+            id: res.roleListId,
+            members,
+          }),
+        });
+      }
+      toast.success(t("ct.importRoleListOk"));
+      await load();
+    } catch (err) {
+      toast.error(translate(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
 
   return (
     <div className="space-y-4 rounded-lg border bg-card p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-xl font-semibold text-foreground">
           {t("ct.roleList")}
         </h2>
-        <Button size="sm" onClick={openCreate} disabled={busy}>
-          {t("ct.addRoleList")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => fileRef.current?.click()}
+            disabled={loading || importing || busy}
+          >
+            {t("ct.importRoleList")}
+          </Button>
+          <Button size="sm" onClick={openCreate} disabled={busy}>
+            {t("ct.addRoleList")}
+          </Button>
+        </div>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        id="rolelist-import-file"
+        name="roleListImportFile"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => void importRoleList(e)}
+      />
 
       {(creating || editing) && (
         <form
@@ -254,6 +410,13 @@ const RoleListsManager = () => {
                 </td>
                 <td className="px-2 py-2 text-right">
                   <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => exportRoleList(list)}
+                    >
+                      {t("ct.exportRoleList")}
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"

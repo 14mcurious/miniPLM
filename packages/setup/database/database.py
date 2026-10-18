@@ -110,8 +110,9 @@ STATEMENTS = [
         'CREATE UNIQUE INDEX IF NOT EXISTS workspace_name_uniq_idx'
         ' ON "MiniPLM"."workspaces" (project_id, lower(name))'
     ),
-    # Work containers: entity living directly in a project or inside a work
-    # space. identifier is the unique system id (WC-000001 style).
+    # Work containers: entity living inside a work space (a container is
+    # always attached to exactly one work space). identifier is the unique
+    # system id (WC-000001 style).
     (
         'CREATE TABLE IF NOT EXISTS "MiniPLM"."work_containers" ('
         "  id BIGSERIAL PRIMARY KEY,"
@@ -253,6 +254,30 @@ STATEMENTS = [
         '  role_id BIGINT NOT NULL REFERENCES "MiniPLM"."roles"(id) ON DELETE CASCADE,'
         '  PRIMARY KEY (role_list_id, role_id)'
         ')'
+    ),
+    # Work containers always live inside a work space. Idempotent migration
+    # for containers created before the rule: projects with orphan
+    # containers but no work space get a default work space, orphan
+    # containers are attached to the first work space of their project, and
+    # the NOT NULL constraint is enforced.
+    (
+        "INSERT INTO \"MiniPLM\".\"workspaces\" (project_id, name, title, parent_id, created_by, created_at, updated_at)"
+        " SELECT p.id, 'Workspace', 'Default workspace', NULL, NULL, now(), now()"
+        " FROM \"MiniPLM\".\"projects\" p"
+        " WHERE EXISTS (SELECT 1 FROM \"MiniPLM\".\"work_containers\" c WHERE c.project_id = p.id AND c.workspace_id IS NULL)"
+        " AND NOT EXISTS (SELECT 1 FROM \"MiniPLM\".\"workspaces\" w WHERE w.project_id = p.id)"
+    ),
+    (
+        "UPDATE \"MiniPLM\".\"work_containers\" c SET workspace_id = sub.ws_id"
+        " FROM (SELECT project_id, min(id) AS ws_id FROM \"MiniPLM\".\"workspaces\" GROUP BY project_id) sub"
+        " WHERE c.workspace_id IS NULL AND c.project_id = sub.project_id"
+    ),
+    (
+        'ALTER TABLE "MiniPLM"."work_containers" ALTER COLUMN workspace_id SET NOT NULL'
+    ),
+    (
+        'CREATE INDEX IF NOT EXISTS work_containers_workspace_idx'
+        ' ON "MiniPLM"."work_containers" (workspace_id)'
     ),
 ]
 

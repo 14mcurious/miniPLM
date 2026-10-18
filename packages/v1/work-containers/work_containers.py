@@ -282,11 +282,13 @@ def do_create(ctx, session, data):
 
     workspace_id = None
     raw_workspace = data.get("workspaceId", data.get("workspace_id"))
-    if raw_workspace not in (None, ""):
-        try:
-            workspace_id = int(raw_workspace)
-        except (TypeError, ValueError):
-            return fail("workContainers.error.workspaceNotFound")
+    if raw_workspace in (None, ""):
+        # Work containers always live inside a work space.
+        return fail("workContainers.error.workspaceRequired")
+    try:
+        workspace_id = int(raw_workspace)
+    except (TypeError, ValueError):
+        return fail("workContainers.error.workspaceNotFound")
 
     progress_value = str(data.get("progress") or "").strip() or None
 

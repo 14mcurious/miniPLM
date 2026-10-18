@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -24,6 +24,8 @@ const RolesManager = () => {
   const [selectedUsers, setSelectedUsers] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const translate = (err: unknown): string => {
     if (err instanceof ApiError && err.serverKey) {
@@ -150,18 +152,195 @@ const RolesManager = () => {
     }
   };
 
+  const ROLE_NAME_RE = /^[A-Za-z][A-Za-z0-9 ]{0,49}$/;
+
+  /** Export all roles as a downloadable JSON file. */
+  const exportRoles = async () => {
+    try {
+      const data = await api<{ roles: Role[] }>(CUSTOM_TYPES_ENDPOINT);
+      const payload = {
+        app: "miniplm",
+        resource: "roles",
+        exportedAt: new Date().toISOString(),
+        roles: (data.roles ?? []).map((role) => ({
+          id: role.id,
+          name: role.name,
+          members: role.members
+            .map((m) => m.id)
+            .filter((id): id is number => id !== undefined),
+        })),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `miniplm-roles-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(translate(err));
+    }
+  };
+
+  /**
+   * Import roles from a JSON file (array of roles, or an object with a
+   * "roles" array). Missing roles are created; members of existing roles
+   * (matched by name, case-insensitive) are updated.
+   */
+  const importRoles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.confirm(t("ct.importRolesConfirm"))) return;
+    setImporting(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        toast.error(t("ct.importRolesInvalid"));
+        return;
+      }
+      const rawRoles = Array.isArray(parsed)
+        ? parsed
+        : parsed &&
+            typeof parsed === "object" &&
+            Array.isArray((parsed as { roles?: unknown[] }).roles)
+          ? (parsed as { roles: unknown[] }).roles
+          : null;
+      if (!rawRoles) {
+        toast.error(t("ct.importRolesInvalid"));
+        return;
+      }
+      // Normalize and validate; duplicate names keep the last occurrence.
+      const byName = new Map<string, { name: string; members: number[] }>();
+      for (const item of rawRoles) {
+        if (!item || typeof item !== "object") {
+          toast.error(t("ct.importRolesInvalid"));
+          return;
+        }
+        const it = item as { name?: unknown; members?: unknown };
+        const nm = typeof it.name === "string" ? it.name.trim() : "";
+        if (!nm || !ROLE_NAME_RE.test(nm)) {
+          toast.error(t("ct.importRolesInvalid"));
+          return;
+        }
+        if (!Array.isArray(it.members)) {
+          toast.error(t("ct.importRolesInvalid"));
+          return;
+        }
+        const members: number[] = [];
+        for (const m of it.members) {
+          if (typeof m !== "number" || !Number.isInteger(m)) {
+            toast.error(t("ct.importRolesInvalid"));
+            return;
+          }
+          members.push(m);
+        }
+        byName.set(nm.toLowerCase(), { name: nm, members });
+      }
+      const imported = [...byName.values()];
+      const knownUserIds = new Set(
+        users
+          .map((u) => u.id)
+          .filter((id): id is number => id !== undefined)
+      );
+      const unknown = [
+        ...new Set(imported.flatMap((r) => r.members)),
+      ].filter((id) => !knownUserIds.has(id));
+      if (unknown.length > 0) {
+        toast.error(
+          t("ct.importRolesUnknownUser", { ids: unknown.join(", ") })
+        );
+        return;
+      }
+      let created = 0;
+      let updated = 0;
+      for (const role of imported) {
+        const existing = roles.find(
+          (r) => r.name.toLowerCase() === role.name.toLowerCase()
+        );
+        if (existing) {
+          await api(CUSTOM_TYPES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "set-role-members",
+              id: existing.id,
+              members: role.members,
+            }),
+          });
+          updated += 1;
+        } else {
+          const res = await api<{ roleId: number }>(CUSTOM_TYPES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "create-role",
+              name: role.name,
+            }),
+          });
+          await api(CUSTOM_TYPES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "set-role-members",
+              id: res.roleId,
+              members: role.members,
+            }),
+          });
+          created += 1;
+        }
+      }
+      toast.success(t("ct.importRolesOk", { created, updated }));
+      await load();
+    } catch (err) {
+      toast.error(translate(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
 
   return (
     <div className="space-y-4 rounded-lg border bg-card p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="text-xl font-semibold text-foreground">
           {t("ct.roles")}
         </h2>
-        <Button size="sm" onClick={openCreate} disabled={busy}>
-          {t("ct.addRole")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void exportRoles()}
+            disabled={loading || importing}
+          >
+            {t("ct.exportRoles")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => fileRef.current?.click()}
+            disabled={loading || importing || busy}
+          >
+            {t("ct.importRoles")}
+          </Button>
+          <Button size="sm" onClick={openCreate} disabled={busy}>
+            {t("ct.addRole")}
+          </Button>
+        </div>
       </div>
+      <input
+        ref={fileRef}
+        type="file"
+        id="roles-import-file"
+        name="rolesImportFile"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => void importRoles(e)}
+      />
 
       {(creating || editing) && (
         <form

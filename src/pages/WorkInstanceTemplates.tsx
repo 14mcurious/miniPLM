@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,28 +14,36 @@ import {
 } from "@/lib/types";
 
 const TEMPLATES_ENDPOINT = "/api/my/v1/templates";
+const WORK_AREAS_ENDPOINT = "/api/my/v1/work-areas";
 const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
 
 const ALL_TYPES = ["number", "date", "string", "attachment", "html", "xml", "custom"];
 
+interface ProjectRef {
+  id: number;
+  name: string;
+}
+
 /**
- * Work instance templates of a work area: JSON definitions of the fields a
- * work instance can carry (name, type, description, referenced custom
- * type). Instances created from a template get exactly these fields.
+ * Work instance JSON templates (administration → configuration): JSON
+ * definitions of the fields a work instance can carry (name, type,
+ * description, referenced custom type). Templates are listed across all
+ * accessible work areas; new templates are created in the selected project.
  */
-const WorkAreaTemplates = () => {
+const WorkInstanceTemplates = () => {
   const { t } = useI18n();
-  const { projectId } = useParams<{ projectId: string }>();
   const { status } = useAuth();
 
   const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
+  const [projects, setProjects] = useState<ProjectRef[]>([]);
   const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [formMode, setFormMode] = useState<
-    null | { mode: "create" } | { mode: "update"; id: number }
+    null | { mode: "create" } | { mode: "update"; id: number; project: string }
   >(null);
+  const [projectId, setProjectId] = useState<string>("");
   const [name, setName] = useState("");
   const [fields, setFields] = useState<FieldDef[]>([]);
   const [busy, setBusy] = useState(false);
@@ -49,21 +57,23 @@ const WorkAreaTemplates = () => {
   };
 
   const load = useCallback(async () => {
-    if (!projectId) return;
     setLoading(true);
     setError(null);
     try {
-      const [templatesData, customTypesData] = await Promise.all([
-        api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
-          method: "POST",
-          body: JSON.stringify({
-            operation: "list",
-            projectId: Number(projectId),
+      const [templatesData, workAreasData, customTypesData] =
+        await Promise.all([
+          api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({ operation: "list" }),
           }),
-        }),
-        api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
-      ]);
+          api<{ workAreas: ProjectRef[] }>(WORK_AREAS_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({ operation: "list" }),
+          }),
+          api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
+        ]);
       setTemplates(templatesData.templates ?? []);
+      setProjects(workAreasData.workAreas ?? []);
       setCustomTypes(customTypesData.customTypes ?? []);
     } catch (err) {
       setError(translate(err));
@@ -71,7 +81,7 @@ const WorkAreaTemplates = () => {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, []);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -81,13 +91,14 @@ const WorkAreaTemplates = () => {
 
   const openCreate = () => {
     setFormMode({ mode: "create" });
+    setProjectId(projects.length === 1 ? String(projects[0].id) : "");
     setName("");
     setFields([]);
     setFormError(null);
   };
 
   const openUpdate = (template: InstanceTemplate) => {
-    setFormMode({ mode: "update", id: template.id });
+    setFormMode({ mode: "update", id: template.id, project: template.projectName });
     setName(template.name);
     setFields(
       template.definition.map((def) => ({
@@ -137,14 +148,14 @@ const WorkAreaTemplates = () => {
   return (
     <>
       <BackLink
-        to={`/work-area/${projectId}`}
-        label={`${t("workArea.title")} — ${t("wa.templates")}`}
+        to="/administration/configuration"
+        label={t("configuration.title")}
       />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-5xl">
           <div className="mb-4 flex items-center justify-between gap-4">
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              {t("wa.templates")}
+              {t("instanceTemplates.title")}
             </h1>
             <Button onClick={openCreate} disabled={busy}>
               {t("wa.newTemplate")}
@@ -169,6 +180,10 @@ const WorkAreaTemplates = () => {
               onSubmit={async (e) => {
                 e.preventDefault();
                 if (busy) return;
+                if (formMode.mode === "create" && !projectId) {
+                  setFormError(t("instanceTemplates.projectRequired"));
+                  return;
+                }
                 if (!name.trim()) {
                   setFormError(t("wa.error.nameRequired"));
                   return;
@@ -220,6 +235,35 @@ const WorkAreaTemplates = () => {
                   ? t("wa.newTemplateTitle")
                   : t("wa.editTemplateTitle")}
               </h2>
+              {formMode.mode === "create" ? (
+                <div>
+                  <label htmlFor="template-project" className={labelClass}>
+                    {t("instanceTemplates.project")}
+                  </label>
+                  <select
+                    id="template-project"
+                    name="templateProject"
+                    value={projectId}
+                    onChange={(e) => setProjectId(e.target.value)}
+                    disabled={busy}
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                  >
+                    <option value="">{t("instanceTemplates.selectProject")}</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t("instanceTemplates.project")}:{" "}
+                  <span className="font-medium text-foreground">
+                    {formMode.project}
+                  </span>
+                </p>
+              )}
               <div>
                 <label htmlFor="template-name" className={labelClass}>
                   {t("wa.name")}
@@ -267,7 +311,9 @@ const WorkAreaTemplates = () => {
                         name={`tplFieldCustomType${index}`}
                         value={field.customType ?? ""}
                         onChange={(e) =>
-                          updateField(index, { customType: e.target.value || null })
+                          updateField(index, {
+                            customType: e.target.value || null,
+                          })
                         }
                         disabled={busy}
                         className="h-10 w-full rounded-md border border-input bg-background px-2 py-2 text-sm text-foreground"
@@ -355,12 +401,15 @@ const WorkAreaTemplates = () => {
           {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
           ) : templates.length === 0 && !formMode ? (
-            <p className="text-sm text-muted-foreground">{t("wa.emptyTemplates")}</p>
+            <p className="text-sm text-muted-foreground">
+              {t("wa.emptyTemplates")}
+            </p>
           ) : (
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="px-2 py-2">{t("wa.name")}</th>
+                  <th className="px-2 py-2">{t("instanceTemplates.project")}</th>
                   <th className="px-2 py-2">{t("wa.fields")}</th>
                   <th className="px-2 py-2">{t("wa.usedBy")}</th>
                   <th className="px-2 py-2">{t("wa.updated")}</th>
@@ -372,6 +421,9 @@ const WorkAreaTemplates = () => {
                   <tr key={template.id} className="border-b hover:bg-muted/40">
                     <td className="px-2 py-2 font-medium text-foreground">
                       {template.name}
+                    </td>
+                    <td className="px-2 py-2 text-muted-foreground">
+                      {template.projectName}
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {template.definition
@@ -416,4 +468,4 @@ const WorkAreaTemplates = () => {
   );
 };
 
-export default WorkAreaTemplates;
+export default WorkInstanceTemplates;

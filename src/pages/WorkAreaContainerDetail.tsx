@@ -109,11 +109,14 @@ const WorkAreaContainerDetail = () => {
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
-  const backTo = `/work-area/${projectId}/work-containers`;
+  const backTo =
+    container?.workspaceId != null
+      ? `/work-area/${projectId}/workspaces/${container.workspaceId}`
+      : `/work-area/${projectId}/workspaces`;
 
   return (
     <>
-      <BackLink to={backTo} label={t("wa.workContainers")} />
+      <BackLink to={backTo} label={t("wa.workspace")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-4xl">
           {loading ? (

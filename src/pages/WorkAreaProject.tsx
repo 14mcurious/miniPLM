@@ -92,21 +92,6 @@ const WorkAreaProject = () => {
       desc: t("wa.workspacesDesc"),
     },
     {
-      to: `${base}/work-containers`,
-      title: t("wa.workContainers"),
-      desc: t("wa.workContainersDesc"),
-    },
-    {
-      to: `${base}/work-instances`,
-      title: t("wa.workInstances"),
-      desc: t("wa.workInstancesDesc"),
-    },
-    {
-      to: `${base}/templates`,
-      title: t("wa.templates"),
-      desc: t("wa.templatesDesc"),
-    },
-    {
       to: `${base}/search`,
       title: t("wa.search"),
       desc: t("wa.searchDesc"),

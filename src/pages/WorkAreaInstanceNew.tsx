@@ -22,12 +22,17 @@ import type {
 } from "@/lib/types";
 
 /**
- * New Work Instance page: dedicated page for creating a new work instance.
- * Templates and other configuration are managed on separate pages.
+ * New Work Instance page (inside a work space): dedicated page for creating
+ * a new work instance. The container list is limited to the containers of
+ * the selected work space, so an instance is always created inside a work
+ * space.
  */
 const WorkAreaInstanceNew = () => {
   const { t } = useI18n();
-  const { projectId } = useParams<{ projectId: string }>();
+  const { projectId, workspaceId } = useParams<{
+    projectId: string;
+    workspaceId: string;
+  }>();
   const { status } = useAuth();
   const navigate = useNavigate();
 
@@ -51,7 +56,7 @@ const WorkAreaInstanceNew = () => {
   };
 
   const load = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId || !workspaceId) return;
     setLoading(true);
     setError(null);
     try {
@@ -72,6 +77,7 @@ const WorkAreaInstanceNew = () => {
             body: JSON.stringify({
               operation: "list",
               projectId: Number(projectId),
+              workspaceId: Number(workspaceId),
             }),
           }),
           api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
@@ -99,7 +105,7 @@ const WorkAreaInstanceNew = () => {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, workspaceId]);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -110,10 +116,11 @@ const WorkAreaInstanceNew = () => {
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   const base = `/work-area/${projectId}`;
+  const workspaceBack = `${base}/workspaces/${workspaceId}`;
 
   return (
     <>
-      <BackLink to={`${base}/work-instances`} label={t("wa.workInstances")} />
+      <BackLink to={workspaceBack} label={t("wa.workspaces")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-4xl">
           <h1 className="mb-6 text-3xl font-bold tracking-tight text-foreground">
@@ -131,6 +138,10 @@ const WorkAreaInstanceNew = () => {
 
           {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
+          ) : form && containers.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {t("wa.instanceNoContainers")}
+            </p>
           ) : form ? (
             <InstanceForm
               form={form}
@@ -144,10 +155,10 @@ const WorkAreaInstanceNew = () => {
               busy={busy}
               setBusy={setBusy}
               onSaved={() => {
-                navigate(`${base}/work-instances`);
+                navigate(workspaceBack);
               }}
               onCancel={() => {
-                navigate(`${base}/work-instances`);
+                navigate(workspaceBack);
               }}
             />
           ) : null}

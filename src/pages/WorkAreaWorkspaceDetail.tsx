@@ -278,7 +278,9 @@ const WorkAreaWorkspaceDetail = () => {
                 </div>
               )}
 
-              {/* Work containers of this work space */}
+              {/* Work containers of this work space (hidden while the work
+              instance edit form is open). */}
+              {!editForm && (
               <section className="mb-8">
                 <div className="mb-3 flex items-center justify-between gap-4">
                   <h2 className="text-xl font-semibold text-foreground">
@@ -511,6 +513,7 @@ const WorkAreaWorkspaceDetail = () => {
                   </table>
                 )}
               </section>
+              )}
 
               {/* Work instances of this work space's containers */}
               <section>
@@ -518,17 +521,19 @@ const WorkAreaWorkspaceDetail = () => {
                   <h2 className="text-xl font-semibold text-foreground">
                     {t("wa.workInstances")}
                   </h2>
-                  <Button
-                    size="sm"
-                    asChild
-                    disabled={containers.length === 0}
-                  >
-                    <Link
-                      to={`${base}/workspaces/${workspaceId}/work-instances/new`}
+                  {!editForm && (
+                    <Button
+                      size="sm"
+                      asChild
+                      disabled={containers.length === 0}
                     >
-                      {t("wa.newInstance")}
-                    </Link>
-                  </Button>
+                      <Link
+                        to={`${base}/workspaces/${workspaceId}/work-instances/new`}
+                      >
+                        {t("wa.newInstance")}
+                      </Link>
+                    </Button>
+                  )}
                 </div>
                 {editForm && (
                   <div className="mb-4">

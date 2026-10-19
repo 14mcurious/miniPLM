@@ -125,6 +125,7 @@ def fail(key, **params):
 
 def validate_options(value_type, raw_options):
     """Normalize and validate the enumerated option values."""
+    # Options carry exactly two fields: label and value.
     if raw_options is None:
         raw_options = []
     if not isinstance(raw_options, list):
@@ -150,10 +151,7 @@ def validate_options(value_type, raw_options):
             return None, fail("customTypes.error.optionDuplicate")
         seen.add(value)
         label = str(item.get("label") or value).strip() or value
-        description = str(item.get("description") or "").strip()
-        options.append(
-            {"label": label[:200], "value": value, "description": description[:500]}
-        )
+        options.append({"label": label[:200], "value": value})
     return options, None
 
 

@@ -10,7 +10,7 @@ import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
-import { allowedProgressOptions, progressDescription } from "@/lib/workflow-progress";
+import { allowedProgressOptions, progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import InstanceForm from "@/components/InstanceForm";
 import WorkAreaContainersTable from "@/components/WorkAreaContainersTable";
@@ -424,17 +424,12 @@ const WorkAreaWorkspaceDetail = () => {
                           <option
                             key={option.value}
                             value={option.value}
-                            title={option.description || option.label}
+                            title={option.label || option.value}
                           >
-                            {option.label}
+                            {option.value}
                           </option>
                         ))}
                       </select>
-                      {progressDescription(progressWorkflow, progress) && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {progressDescription(progressWorkflow, progress)}
-                        </p>
-                      )}
                     </div>
                     {formError && (
                       <p role="alert" className="text-sm text-destructive">

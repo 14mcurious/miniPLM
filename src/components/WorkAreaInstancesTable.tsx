@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/i18n";
-import { progressDescription } from "@/lib/workflow-progress";
+import { progressLabel } from "@/lib/workflow-progress";
 import { ProgressWorkflow, WorkInstance } from "@/lib/types";
 
 const formatDate = (value: string | null): string =>
@@ -54,12 +54,7 @@ const WorkAreaInstancesTable = ({
               {instance.workContainerName}
             </td>
             <td className="px-2 py-2 text-muted-foreground">
-              <span
-                title={progressDescription(
-                  progressWorkflow,
-                  instance.progress
-                )}
-              >
+              <span title={progressLabel(progressWorkflow, instance.progress)}>
                 {instance.progress ?? "—"}
               </span>
             </td>

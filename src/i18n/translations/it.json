@@ -427,7 +427,6 @@
   "ct.options": "Valori enumerati",
   "ct.optionValue": "Valore",
   "ct.optionLabel": "Etichetta (opzionale)",
-  "ct.optionDescription": "Descrizione (mostrata al passaggio del mouse)",
   "ct.addOption": "Aggiungi valore",
   "ct.moveUp": "Sposta su",
   "ct.moveDown": "Sposta giù",

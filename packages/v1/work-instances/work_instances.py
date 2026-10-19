@@ -167,7 +167,6 @@ def progress_workflow(cur):
                 {
                     "label": str(item.get("label") or value).strip(),
                     "value": value,
-                    "description": str(item.get("description") or "").strip(),
                 }
             )
     transitions = []

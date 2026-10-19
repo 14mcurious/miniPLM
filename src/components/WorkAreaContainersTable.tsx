@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
-import { progressDescription } from "@/lib/workflow-progress";
+import { progressLabel } from "@/lib/workflow-progress";
 import { Button } from "@/components/ui/button";
 import { ProgressWorkflow, UserRef, WorkContainer } from "@/lib/types";
 
@@ -101,10 +101,7 @@ const WorkAreaContainersTable = ({
             </td>
             <td className="px-2 py-2 text-muted-foreground">
               <span
-                title={progressDescription(
-                  progressWorkflow,
-                  container.progress
-                )}
+                title={progressLabel(progressWorkflow, container.progress)}
               >
                 {container.progress ?? "—"}
               </span>

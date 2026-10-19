@@ -12,7 +12,9 @@ import type { ProgressOption, ProgressWorkflow } from "@/lib/types";
  *    allowed transition are offered; a transition with a role is only
  *    usable by users holding that role (null role = any user).
  *
- * The backend re-checks every rule, this only drives what the UI shows.
+ * The progress field shows each state's value; hovering reveals the
+ * state's label. The backend re-checks every rule, this only drives
+ * what the UI offers.
  */
 
 export function allowedProgressOptions(
@@ -42,7 +44,7 @@ export function allowedProgressOptions(
   // no-op), plus the states reachable by the user's allowed transitions.
   if (transitions.length === 0) {
     return value && !byValue.has(value)
-      ? [...options, { label: value, value, description: "" }]
+      ? [...options, { label: value, value }]
       : options;
   }
   if (byValue.has(value)) {
@@ -66,16 +68,16 @@ export function allowedProgressOptions(
     return initial ? [initial] : options;
   }
   return value
-    ? [...options, { label: value, value, description: "" }]
+    ? [...options, { label: value, value }]
     : options;
 }
 
-/** Description of a progress value (for hover tooltips), or "". */
-export function progressDescription(
+/** Label of a progress value (shown on hover), or "". */
+export function progressLabel(
   workflow: ProgressWorkflow | null | undefined,
   value: string | null | undefined
 ): string {
   if (!workflow || !value) return "";
   const option = workflow.options.find((item) => item.value === value);
-  return option?.description ?? "";
+  return option?.label ?? "";
 }

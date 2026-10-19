@@ -427,7 +427,6 @@
   "ct.options": "Enumerated values",
   "ct.optionValue": "Value",
   "ct.optionLabel": "Label (optional)",
-  "ct.optionDescription": "Description (shown on hover)",
   "ct.addOption": "Add value",
   "ct.moveUp": "Move up",
   "ct.moveDown": "Move down",

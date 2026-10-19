@@ -5,7 +5,7 @@ import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
-import { progressDescription } from "@/lib/workflow-progress";
+import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import {
@@ -246,10 +246,7 @@ const WorkAreaInstanceDetail = () => {
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
                       <span
-                        title={progressDescription(
-                          progressWorkflow,
-                          instance.progress
-                        )}
+                        title={progressLabel(progressWorkflow, instance.progress)}
                       >
                         {instance.progress ?? "—"}
                       </span>

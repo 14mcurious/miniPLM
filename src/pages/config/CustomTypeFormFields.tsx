@@ -166,22 +166,6 @@ const CustomTypeFormFields = ({
               }
               disabled={busy}
             />
-            <Input
-              id={`ct-option-description-${index}`}
-              name={`ctOptionDescription${index}`}
-              placeholder={t("ct.optionDescription")}
-              value={option.description ?? ""}
-              onChange={(e) =>
-                setOptions((prev) =>
-                  prev.map((item, i) =>
-                    i === index
-                      ? { ...item, description: e.target.value }
-                      : item
-                  )
-                )
-              }
-              disabled={busy}
-            />
             <Button
               size="sm"
               variant="outline"

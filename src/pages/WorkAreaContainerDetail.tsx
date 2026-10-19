@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
-import { progressDescription } from "@/lib/workflow-progress";
+import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import {
   HistoryEntry,
@@ -172,10 +172,7 @@ const WorkAreaContainerDetail = () => {
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
                       <span
-                        title={progressDescription(
-                          progressWorkflow,
-                          container.progress
-                        )}
+                        title={progressLabel(progressWorkflow, container.progress)}
                       >
                         {container.progress ?? "—"}
                       </span>
@@ -291,10 +288,7 @@ const WorkAreaContainerDetail = () => {
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">
                           <span
-                            title={progressDescription(
-                              progressWorkflow,
-                              instance.progress
-                            )}
+                            title={progressLabel(progressWorkflow, instance.progress)}
                           >
                             {instance.progress ?? "—"}
                           </span>

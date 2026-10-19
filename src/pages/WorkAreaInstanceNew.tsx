@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import BackLink from "@/components/BackLink";
 import InstanceForm from "@/components/InstanceForm";
+import { allowedProgressOptions } from "@/lib/workflow-progress";
 import {
   CONTAINERS_ENDPOINT,
   CUSTOM_TYPES_ENDPOINT,
@@ -17,6 +19,7 @@ import type {
   CustomType,
   InstanceTemplate,
   ProgressOption,
+  ProgressWorkflow,
   UserRef,
   WorkContainer,
 } from "@/lib/types";
@@ -35,14 +38,14 @@ const WorkAreaInstanceNew = () => {
   }>();
   const { status } = useAuth();
   const navigate = useNavigate();
+  const { can } = useProjectModes(projectId);
 
   const [containers, setContainers] = useState<WorkContainer[]>([]);
   const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
   const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
   const [users, setUsers] = useState<UserRef[]>([]);
-  const [progressOptions, setProgressOptions] = useState<ProgressOption[]>(
-    []
-  );
+  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -65,6 +68,8 @@ const WorkAreaInstanceNew = () => {
           api<{
             users: UserRef[];
             progressOptions: ProgressOption[] | null;
+            progressWorkflow: ProgressWorkflow | null;
+            userRoles: string[];
           }>(INSTANCES_ENDPOINT, {
             method: "POST",
             body: JSON.stringify({
@@ -90,7 +95,8 @@ const WorkAreaInstanceNew = () => {
           api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
         ]);
       setUsers(instancesData.users ?? []);
-      setProgressOptions(instancesData.progressOptions ?? []);
+      setProgressWorkflow(instancesData.progressWorkflow ?? null);
+      setUserRoles(instancesData.userRoles ?? []);
       setContainers(containersData.workContainers ?? []);
       setTemplates(templatesData.templates ?? []);
       setCustomTypes(customTypesData.customTypes ?? []);
@@ -138,6 +144,13 @@ const WorkAreaInstanceNew = () => {
 
           {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
+          ) : !can("C") ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              {t("workArea.noAccess")}
+            </div>
           ) : form && containers.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {t("wa.instanceNoContainers")}
@@ -151,7 +164,12 @@ const WorkAreaInstanceNew = () => {
               templates={templates}
               customTypes={customTypes}
               users={users}
-              progressOptions={progressOptions}
+              progressOptions={allowedProgressOptions(
+                progressWorkflow,
+                userRoles,
+                "",
+                "create"
+              )}
               busy={busy}
               setBusy={setBusy}
               onSaved={() => {

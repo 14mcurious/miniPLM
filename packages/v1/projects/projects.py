@@ -5,6 +5,9 @@ import time
 DEFAULT_MAX_SUBPROJECT_LEVELS = 10
 MAX_ALLOWED_SUBPROJECT_LEVELS = 1000
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]*$")
+# S3 keys of work instance attachments (see v1/attachments):
+# "work-instances/<uuid>/<file name>".
+S3_KEY_RE = re.compile(r"^work-instances/[A-Za-z0-9._/-]+$")
 
 PROJECT_COLUMNS = (
     "p.id, p.name, p.identifier, p.parent_id, p.level, "
@@ -239,6 +242,168 @@ def create_project(conn, data):
     return {"ok": True, "project": project_to_dict(row)}
 
 
+def parse_project_ids(data):
+    """Normalize the requested project ids (list, comma string or int)."""
+    raw = data.get("ids", data.get("id"))
+    if raw is None:
+        return None, fail("projects.error.idsRequired")
+    if isinstance(raw, bool):
+        return None, fail("projects.error.idsRequired")
+    if isinstance(raw, int):
+        raw = [raw]
+    elif isinstance(raw, str):
+        raw = [part for part in raw.split(",") if part.strip()]
+    if not isinstance(raw, list) or not raw:
+        return None, fail("projects.error.idsRequired")
+    ids = []
+    for value in raw:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            return None, fail("projects.error.idsRequired")
+    return sorted(set(ids)), None
+
+
+def project_closure(cur, ids):
+    """Map {id: name} of the selected projects and all their descendants."""
+    cur.execute(
+        'WITH RECURSIVE closure AS ('
+        '  SELECT id, name FROM "MiniPLM"."projects" WHERE id = ANY(%s)'
+        '  UNION ALL'
+        '  SELECT p.id, p.name FROM "MiniPLM"."projects" p'
+        '  JOIN closure c ON p.parent_id = c.id'
+        ') SELECT id, name FROM closure',
+        (ids,),
+    )
+    return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def collect_attachment_keys(cur, project_ids):
+    """S3 keys referenced by the work instances of the given projects."""
+    keys = set()
+    cur.execute(
+        'SELECT fields FROM "MiniPLM"."work_instances"'
+        " WHERE project_id = ANY(%s)",
+        (project_ids,),
+    )
+    for (fields,) in cur.fetchall():
+        if isinstance(fields, str):
+            try:
+                fields = json.loads(fields)
+            except Exception:
+                continue
+        if not isinstance(fields, list):
+            continue
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            if str(field.get("type") or "").lower() != "attachment":
+                continue
+            value = field.get("value")
+            key = None
+            if isinstance(value, dict):
+                key = value.get("s3Key") or value.get("s3_key")
+            elif isinstance(value, str):
+                key = value
+            key = str(key or "").strip()
+            if S3_KEY_RE.match(key):
+                keys.add(key)
+    return sorted(keys)
+
+
+def delete_projects(conn, ctx, data):
+    """Delete the selected projects with their full work area data.
+
+    Cascades (ON DELETE CASCADE) to the sub-projects, work spaces, work
+    containers, work instances, instance templates and container history.
+    Groups that were associated with the deleted projects are removed as
+    well (their user memberships cascade; the users themselves stay). A
+    group keeps its life if it is still linked to a project that survives
+    the deletion.
+    """
+    ids, error = parse_project_ids(data)
+    if error is not None:
+        return error
+    with conn.cursor() as cur:
+        closure = project_closure(cur, ids)
+    if not closure:
+        return fail("projects.error.projectNotFound")
+    project_ids = sorted(closure)
+    project_names = sorted(set(closure.values()))
+    with conn.cursor() as cur:
+        attachment_keys = collect_attachment_keys(cur, project_ids)
+        # Groups that reference at least one deleted project (before the
+        # links are removed): only these may be dropped.
+        cur.execute(
+            'SELECT DISTINCT group_id FROM "MiniPLM"."group_projects"'
+            " WHERE project_name = ANY(%s)",
+            (project_names,),
+        )
+        affected_group_ids = sorted(row[0] for row in cur.fetchall())
+        # Unlink the groups that reference the deleted projects.
+        cur.execute(
+            'DELETE FROM "MiniPLM"."group_projects"'
+            " WHERE project_name = ANY(%s)",
+            (project_names,),
+        )
+        # Deleting the projects cascades to the whole work area.
+        cur.execute(
+            'DELETE FROM "MiniPLM"."projects" WHERE id = ANY(%s)',
+            (project_ids,),
+        )
+        # Drop the groups that lost their last project link (membership in
+        # user_groups cascades; the users themselves are never touched).
+        deleted_group_names = []
+        if affected_group_ids:
+            cur.execute(
+                'SELECT id, name FROM "MiniPLM"."groups" WHERE id = ANY(%s)',
+                (affected_group_ids,),
+            )
+            affected = {row[0]: row[1] for row in cur.fetchall()}
+            cur.execute(
+                'DELETE FROM "MiniPLM"."groups" g'
+                " WHERE g.id = ANY(%s)"
+                ' AND NOT EXISTS ('
+                '  SELECT 1 FROM "MiniPLM"."group_projects" gp'
+                '  WHERE gp.group_id = g.id'
+                ')',
+                (affected_group_ids,),
+            )
+            cur.execute(
+                'SELECT id FROM "MiniPLM"."groups" WHERE id = ANY(%s)',
+                (affected_group_ids,),
+            )
+            kept_ids = {row[0] for row in cur.fetchall()}
+            deleted_group_names = sorted(
+                name for group_id, name in affected.items()
+                if group_id not in kept_ids
+            )
+    conn.commit()
+    # Best-effort removal of the S3 objects referenced by the deleted work
+    # instances (orphaned after the DB commit); the database is the source
+    # of truth, so S3 failures do not fail the deletion.
+    s3_client = getattr(ctx, "S3_CLIENT", None)
+    s3_bucket = getattr(ctx, "S3_DATA", None)
+    attachments_deleted = 0
+    attachments_failed = 0
+    if s3_client is not None and s3_bucket is not None:
+        for key in attachment_keys:
+            try:
+                s3_client.delete_object(Bucket=s3_bucket, Key=key)
+                attachments_deleted += 1
+            except Exception:
+                attachments_failed += 1
+    return {
+        "ok": True,
+        "deletedProjects": len(project_ids),
+        "deletedNames": project_names,
+        "deletedGroups": len(deleted_group_names),
+        "deletedGroupNames": deleted_group_names,
+        "attachmentsDeleted": attachments_deleted,
+        "attachmentsFailed": attachments_failed,
+    }
+
+
 def fetch_subtree(cur, project_id):
     """Map of {id: level} for the project and all its descendants."""
     cur.execute(
@@ -392,11 +557,15 @@ def main(args, ctx=None):
             "update-settings",
             "updatesettings",
             "set-max-levels",
+            "delete",
+            "delete-selected",
         )
         if mutating and not require_csrf(ctx, args, session):
             return fail("csrf")
         if operation == "create":
             return create_project(conn, data)
+        if operation in ("delete", "delete-selected"):
+            return delete_projects(conn, ctx, data)
         if operation in ("update-parent", "updateparent", "set-parent"):
             return update_parent(conn, data)
         if operation in ("update-settings", "updatesettings", "set-max-levels"):

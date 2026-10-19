@@ -54,6 +54,19 @@ STATEMENTS = [
         "  PRIMARY KEY (user_id, group_id)"
         ")"
     ),
+    # Idempotent cleanup of orphan groups: a group without any project link
+    # is broken (the group is created with a project and update_group never
+    # removes the link), so it can only exist after its project was
+    # deleted. The SysAdmin group is the single legitimate exception (it
+    # grants no work area access by design) and is preserved.
+    (
+        'DELETE FROM "MiniPLM"."groups" g'
+        " WHERE g.name <> 'SysAdmin'"
+        ' AND NOT EXISTS ('
+        '  SELECT 1 FROM "MiniPLM"."group_projects" gp'
+        '  WHERE gp.group_id = g.id'
+        ')'
+    ),
     # Projects: hierarchical structure. identifier is derived from name
     # (spaces removed) and must be unique system-wide (case-insensitive);
     # parent_id = NULL marks a root (main) project; level = number of

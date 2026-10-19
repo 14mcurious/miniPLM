@@ -266,23 +266,39 @@ const InstanceForm = ({
             {t("wa.progress")}
           </label>
           {progressOptions.length > 0 ? (
-            <select
-              id="instance-progress"
-              name="instanceProgress"
-              value={form.progress}
-              onChange={(e) =>
-                setForm({ ...form, progress: e.target.value })
-              }
-              disabled={busy}
-              className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-            >
-              <option value="">{t("wa.progressNone")}</option>
-              {progressOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                id="instance-progress"
+                name="instanceProgress"
+                value={form.progress}
+                onChange={(e) =>
+                  setForm({ ...form, progress: e.target.value })
+                }
+                disabled={busy}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+              >
+                <option value="">{t("wa.progressNone")}</option>
+                {progressOptions.map((option) => (
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    title={option.description || option.label}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {(() => {
+                const selected = progressOptions.find(
+                  (option) => option.value === form.progress
+                );
+                return selected?.description ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {selected.description}
+                  </p>
+                ) : null;
+              })()}
+            </>
           ) : (
             <Input
               id="instance-progress"

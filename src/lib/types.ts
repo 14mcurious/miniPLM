@@ -93,6 +93,8 @@ export interface InstanceTemplate {
 export interface CustomTypeOption {
   label: string;
   value: string;
+  /** Optional human-readable description (shown on hover). */
+  description?: string;
 }
 
 export interface CustomType {
@@ -147,6 +149,15 @@ export interface RoleList {
 export interface ProgressOption {
   label: string;
   value: string;
+  /** Optional human-readable description (shown on hover). */
+  description?: string;
+}
+
+/** Full workflow progress descriptor served by the work area endpoints. */
+export interface ProgressWorkflow {
+  options: ProgressOption[];
+  transitions: WorkflowTransition[];
+  initialState: string | null;
 }
 
 export interface SearchRow {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n";
 import BackLink from "@/components/BackLink";
 import { api, ApiError } from "@/lib/api";
@@ -44,6 +45,8 @@ const ProjectsList = () => {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -55,6 +58,11 @@ const ProjectsList = () => {
       }>(PROJECTS_ENDPOINT);
       setProjects(orderProjects(data.projects ?? []));
       setMaxSubprojectLevels(data.maxSubprojectLevels);
+      // Drop any selection that no longer exists after a reload.
+      setSelected((prev) => {
+        const ids = new Set((data.projects ?? []).map((p) => p.id));
+        return prev.filter((id) => ids.has(id));
+      });
     } catch (err) {
       const message =
         err instanceof ApiError && err.serverKey
@@ -70,6 +78,41 @@ const ProjectsList = () => {
   useEffect(() => {
     load();
   }, []);
+
+  const toggleSelected = (id: number) => {
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]
+    );
+  };
+
+  const handleDeleteSelected = async () => {
+    if (deleting || selected.length === 0) return;
+    if (
+      !window.confirm(
+        t("projectsList.deleteConfirm", { count: selected.length })
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api<{ deletedProjects: number }>(PROJECTS_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({ operation: "delete", ids: selected }),
+      });
+      toast.success(t("projectsList.deleteSuccess", { count: selected.length }));
+      setSelected([]);
+      await load();
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError && error.serverKey
+          ? t(error.serverKey, error.serverParams ?? undefined)
+          : t("error.requestFailed", { status: "?" })
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <>
@@ -102,53 +145,92 @@ const ProjectsList = () => {
               {t("projectsList.empty")}
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/50 text-left">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">
-                      {t("projectsList.name")}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t("projectsList.identifier")}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t("projectsList.parent")}
-                    </th>
-                    <th className="px-3 py-2 font-medium">
-                      {t("projectsList.level")}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((project) => (
-                    <tr key={project.id} className="border-b last:border-0">
-                      <td className="px-3 py-2 text-foreground">
-                        <Link
-                          to={`/administration/projects/project-edit/${project.id}`}
-                          className="text-primary underline-offset-2 hover:underline"
-                        >
-                          {project.name}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {project.identifier}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {project.isRoot
-                          ? t("projectsList.root")
-                          : (project.parentName ?? "—")}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {project.isRoot
-                          ? t("projectsList.levelRoot")
-                          : project.level}
-                      </td>
+            <>
+              <div className="mb-4 flex items-center justify-end gap-3">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={selected.length === 0 || deleting}
+                  aria-busy={deleting}
+                  onClick={handleDeleteSelected}
+                >
+                  {t("projectsList.deleteSelected", { count: selected.length })}
+                </Button>
+              </div>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="border-b bg-muted/50 text-left">
+                    <tr>
+                      <th scope="col" className="w-10 px-3 py-2">
+                        <span className="sr-only">
+                          {t("projectsList.selectProject", { name: "" })}
+                        </span>
+                      </th>
+                      <th className="px-3 py-2 font-medium">
+                        {t("projectsList.name")}
+                      </th>
+                      <th className="px-3 py-2 font-medium">
+                        {t("projectsList.identifier")}
+                      </th>
+                      <th className="px-3 py-2 font-medium">
+                        {t("projectsList.parent")}
+                      </th>
+                      <th className="px-3 py-2 font-medium">
+                        {t("projectsList.level")}
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {projects.map((project) => (
+                      <tr key={project.id} className="border-b last:border-0">
+                        <td className="px-3 py-2">
+                          <label
+                            htmlFor={`project-select-${project.id}`}
+                            className="flex items-center text-sm"
+                          >
+                            <input
+                              type="checkbox"
+                              name="project-select"
+                              id={`project-select-${project.id}`}
+                              checked={selected.includes(project.id)}
+                              onChange={() => toggleSelected(project.id)}
+                              disabled={deleting}
+                              className="h-4 w-4 rounded border-input accent-primary"
+                            />
+                            <span className="sr-only">
+                              {t("projectsList.selectProject", {
+                                name: project.name,
+                              })}
+                            </span>
+                          </label>
+                        </td>
+                        <td className="px-3 py-2 text-foreground">
+                          <Link
+                            to={`/administration/projects/project-edit/${project.id}`}
+                            className="text-primary underline-offset-2 hover:underline"
+                          >
+                            {project.name}
+                          </Link>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {project.identifier}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {project.isRoot
+                            ? t("projectsList.root")
+                            : (project.parentName ?? "—")}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {project.isRoot
+                            ? t("projectsList.levelRoot")
+                            : project.level}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </div>

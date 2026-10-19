@@ -217,17 +217,31 @@ def user_is_sysadmin(cur, user_id):
 
 
 def accessible_projects(cur, user_id):
-    """Projects reachable through the user's enabled groups (deduplicated)."""
+    """Projects reachable through the user's enabled groups (deduplicated).
+
+    Each area carries the union of the access modes granted by the user's
+    enabled groups (C=create, R=read, U=update, D=delete) so the frontend
+    can mirror the real permissions in the UI.
+    """
     cur.execute(
-        'SELECT DISTINCT p.id, p.name FROM "MiniPLM"."projects" p'
+        'SELECT DISTINCT p.id, p.name, g.access_mode FROM "MiniPLM"."projects" p'
         ' JOIN "MiniPLM"."group_projects" gp ON gp.project_name = p.name'
         ' JOIN "MiniPLM"."user_groups" ug ON ug.group_id = gp.group_id'
         ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
-        " WHERE ug.user_id = %s AND g.is_disabled = FALSE"
-        " ORDER BY p.name",
+        " WHERE ug.user_id = %s AND g.is_disabled = FALSE",
         (user_id,),
     )
-    return [{"id": row[0], "name": row[1]} for row in cur.fetchall()]
+    areas = {}
+    for project_id, name, access_mode in cur.fetchall():
+        entry = areas.setdefault(project_id, {"name": name, "modes": set()})
+        entry["modes"].update(str(access_mode or ""))
+    return [
+        {"id": project_id, "name": areas[project_id]["name"],
+         "modes": "".join(sorted(areas[project_id]["modes"]))}
+        for project_id in sorted(
+            areas, key=lambda pid: areas[pid]["name"]
+        )
+    ]
 
 
 def user_has_enabled_group(cur, user_id):

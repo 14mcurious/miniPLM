@@ -150,7 +150,10 @@ def validate_options(value_type, raw_options):
             return None, fail("customTypes.error.optionDuplicate")
         seen.add(value)
         label = str(item.get("label") or value).strip() or value
-        options.append({"label": label[:200], "value": value})
+        description = str(item.get("description") or "").strip()
+        options.append(
+            {"label": label[:200], "value": value, "description": description[:500]}
+        )
     return options, None
 
 
@@ -938,7 +941,7 @@ def main(args, ctx=None):
             if not require_csrf(ctx, args, session):
                 return fail("csrf")
             with conn.cursor() as cur:
-                result = set_progress_type(ctx, cur, data)
+                result = set_progress_type(ctx, data)
             conn.commit()
             return result
         # Role operations

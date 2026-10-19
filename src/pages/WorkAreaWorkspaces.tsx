@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjectModes, type AccessMode } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ const WorkAreaWorkspaces = () => {
   const { t } = useI18n();
   const { projectId } = useParams<{ projectId: string }>();
   const { status } = useAuth();
+  const { can } = useProjectModes(projectId);
   const navigate = useNavigate();
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -138,9 +140,11 @@ const WorkAreaWorkspaces = () => {
             <h1 className="text-3xl font-bold tracking-tight text-foreground">
               {t("wa.workspaces")}
             </h1>
-            <Button onClick={() => openCreate(null)} disabled={busy}>
-              {t("wa.newWorkspace")}
-            </Button>
+            {can("C") && (
+              <Button onClick={() => openCreate(null)} disabled={busy}>
+                {t("wa.newWorkspace")}
+              </Button>
+            )}
           </div>
 
           {error && (
@@ -275,6 +279,7 @@ const WorkAreaWorkspaces = () => {
                   }
                   onCreateChild={openCreate}
                   onEdit={openUpdate}
+                  can={can}
                   onDelete={async (workspace) => {
                     if (
                       !window.confirm(
@@ -315,6 +320,7 @@ interface TreeNodeProps {
   onOpen: (workspace: Workspace) => void;
   onCreateChild: (parentId: number | null) => void;
   onEdit: (workspace: Workspace) => void;
+  can: (mode: AccessMode) => boolean;
   onDelete: (workspace: Workspace) => void;
 }
 
@@ -326,6 +332,7 @@ const TreeNode = ({
   onOpen,
   onCreateChild,
   onEdit,
+  can,
   onDelete,
 }: TreeNodeProps) => {
   const { t } = useI18n();
@@ -357,15 +364,21 @@ const TreeNode = ({
           <Button size="sm" variant="outline" onClick={() => onOpen(workspace)}>
             {t("wa.openWorkspace")}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => onCreateChild(workspace.id)}>
-            {t("wa.newChild")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => onEdit(workspace)}>
-            {t("wa.edit")}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => onDelete(workspace)}>
-            {t("wa.delete")}
-          </Button>
+          {can("C") && (
+            <Button size="sm" variant="outline" onClick={() => onCreateChild(workspace.id)}>
+              {t("wa.newChild")}
+            </Button>
+          )}
+          {can("U") && (
+            <Button size="sm" variant="outline" onClick={() => onEdit(workspace)}>
+              {t("wa.edit")}
+            </Button>
+          )}
+          {can("D") && (
+            <Button size="sm" variant="outline" onClick={() => onDelete(workspace)}>
+              {t("wa.delete")}
+            </Button>
+          )}
         </span>
       </div>
       {expanded && children.length > 0 && (
@@ -380,6 +393,7 @@ const TreeNode = ({
               onOpen={onOpen}
               onCreateChild={onCreateChild}
               onEdit={onEdit}
+              can={can}
               onDelete={onDelete}
             />
           ))}

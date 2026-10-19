@@ -30,6 +30,8 @@ export interface AuthUser {
 export interface WorkAreaRef {
   id: number;
   name: string;
+  /** Union of the access modes granted by the user's groups (C/R/U/D). */
+  modes?: string;
 }
 
 export type AuthStatus = "loading" | "unauthenticated" | "authenticated";

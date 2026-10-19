@@ -132,8 +132,12 @@ def accessible_project_modes(cur, user_id):
     return modes
 
 
-def progress_options(cur):
-    """Options of the designated workflow progress type, or None (free text)."""
+def progress_workflow(cur):
+    """Full descriptor of the designated workflow progress type.
+
+    Returns {options, transitions, initialState} when a workflow progress
+    type is designated, or None (progress is free text).
+    """
     cur.execute(
         'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
         ("workflow_progress_type",),
@@ -143,27 +147,57 @@ def progress_options(cur):
     if not type_name:
         return None
     cur.execute(
-        'SELECT options FROM "MiniPLM"."custom_types"'
+        'SELECT options, initial_state, transitions FROM "MiniPLM"."custom_types"'
         " WHERE lower(name) = lower(%s) AND is_disabled = FALSE",
         (type_name,),
     )
     row = cur.fetchone()
     if not row:
         return None
-    raw_options = row[0]
-    if not isinstance(raw_options, list):
-        return None
     options = []
-    for item in raw_options:
-        if not isinstance(item, dict):
-            continue
-        value = str(item.get("value") or "").strip()
-        if not value:
-            continue
-        options.append(
-            {"label": str(item.get("label") or value).strip(), "value": value}
-        )
-    return options or None
+    raw_options = row[0]
+    if isinstance(raw_options, list):
+        for item in raw_options:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or "").strip()
+            if not value:
+                continue
+            options.append(
+                {
+                    "label": str(item.get("label") or value).strip(),
+                    "value": value,
+                    "description": str(item.get("description") or "").strip(),
+                }
+            )
+    transitions = []
+    if isinstance(row[2], list):
+        for item in row[2]:
+            if not isinstance(item, dict):
+                continue
+            src = str(item.get("from") or "").strip()
+            dst = str(item.get("to") or "").strip()
+            if not src or not dst:
+                continue
+            role = item.get("role")
+            role = str(role).strip() if role not in (None, "") else None
+            transitions.append({"from": src, "to": dst, "role": role})
+    initial_state = str(row[1]).strip() if row[1] else None
+    if not options:
+        return None
+    return {
+        "options": options,
+        "transitions": transitions,
+        "initialState": initial_state,
+    }
+
+
+def progress_options(cur):
+    """Options of the designated workflow progress type, or None (free text)."""
+    workflow = progress_workflow(cur)
+    if workflow is None:
+        return None
+    return [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
 
 
 def validate_progress(progress_value, options):
@@ -175,6 +209,74 @@ def validate_progress(progress_value, options):
         if option["value"] == str(progress_value):
             return None
     return "workInstances.error.progressInvalid"
+
+
+def user_role_names(cur, user_id):
+    """Workflow role names assigned to the user."""
+    cur.execute(
+        'SELECT r.name FROM "MiniPLM"."roles" r'
+        ' JOIN "MiniPLM"."user_roles" ur ON ur.role_id = r.id'
+        " WHERE ur.user_id = %s",
+        (user_id,),
+    )
+    return [str(row[0]) for row in cur.fetchall()]
+
+
+def validate_progress_change(cur, session, current_progress, new_value, on_create=False):
+    """Apply the workflow transition rules to a progress value.
+
+    On create: when the workflow defines transitions, a new object must
+    start from its initial state (or leave the progress empty). On
+    update: the new state must be reachable from the current state by a
+    transition, and the user must hold the role the transition requires
+    (a null role means any user).
+    """
+    value = str(new_value or "").strip()
+    if not value:
+        return None
+    workflow = progress_workflow(cur)
+    if workflow is None:
+        return None
+    transitions = workflow["transitions"]
+    if on_create:
+        if not transitions:
+            return None
+        initial = workflow.get("initialState")
+        if initial and value != initial:
+            return fail(
+                "workInstances.error.progressTransition",
+                **{"from": initial, "to": value},
+            )
+        return None
+    current = str(current_progress or "").strip()
+    if current == value:
+        return None
+    if not transitions:
+        return None
+    option_values = {o["value"] for o in workflow["options"]}
+    if current in option_values:
+        roles = set(user_role_names(cur, session.get("userId")))
+        for transition in transitions:
+            if transition["from"] != current or transition["to"] != value:
+                continue
+            role = transition.get("role")
+            if role in (None, "") or role in roles:
+                return None
+        return fail(
+            "workInstances.error.progressTransition",
+            **{"from": current, "to": value},
+        )
+    # Current value is empty or legacy (not a workflow option): the first
+    # assignment must target the initial state when one is defined.
+    initial = workflow.get("initialState")
+    if initial:
+        if value == initial:
+            return None
+        return fail(
+            "workInstances.error.progressTransition",
+            **{"from": initial, "to": value},
+        )
+    return None
 
 
 def fetch_custom_type(cur, name):
@@ -430,7 +532,14 @@ def do_list(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         modes = accessible_project_modes(cur, session.get("userId"))
         if not modes:
-            return {"ok": True, "workInstances": [], "users": [], "progressOptions": None}
+            return {
+                "ok": True,
+                "workInstances": [],
+                "users": [],
+                "progressOptions": None,
+                "progressWorkflow": None,
+                "userRoles": [],
+            }
         project_ids = list(modes.keys())
         placeholders = ",".join(["%s"] * len(project_ids))
         sql = f"{INSTANCE_SELECT} WHERE i.project_id IN ({placeholders})"
@@ -455,12 +564,20 @@ def do_list(ctx, session, data):
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         users = fetch_users(cur)
-        options = progress_options(cur)
+        workflow = progress_workflow(cur)
+        user_roles = user_role_names(cur, session.get("userId"))
+    options = (
+        [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
+        if workflow is not None
+        else None
+    )
     return {
         "ok": True,
         "workInstances": [instance_row_to_dict(r) for r in rows],
         "users": users,
         "progressOptions": options,
+        "progressWorkflow": workflow,
+        "userRoles": user_roles,
     }
 
 
@@ -535,6 +652,11 @@ def do_create(ctx, session, data):
 
         options = progress_options(cur)
         error = validate_progress(progress_value, options)
+        if error:
+            return fail(error)
+        error = validate_progress_change(
+            cur, session, None, progress_value, on_create=True
+        )
         if error:
             return fail(error)
 
@@ -660,6 +782,11 @@ def do_update(ctx, session, data):
             progress_value = str(data.get("progress") or "").strip() or None
             options = progress_options(cur)
             error = validate_progress(progress_value, options)
+            if error:
+                return fail(error)
+            error = validate_progress_change(
+                cur, session, current_progress, progress_value
+            )
             if error:
                 return fail(error)
 

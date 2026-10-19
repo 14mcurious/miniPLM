@@ -8,9 +8,13 @@ import {
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
+import { allowedProgressOptions, progressDescription } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import InstanceForm from "@/components/InstanceForm";
+import WorkAreaContainersTable from "@/components/WorkAreaContainersTable";
+import WorkAreaInstancesTable from "@/components/WorkAreaInstancesTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +27,7 @@ import {
   CustomType,
   InstanceTemplate,
   ProgressOption,
+  ProgressWorkflow,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -32,12 +37,6 @@ import {
 const WORKSPACES_ENDPOINT = "/api/my/v1/workspaces";
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
 const INSTANCES_ENDPOINT = "/api/my/v1/work-instances";
-
-const formatUser = (user: UserRef | null): string =>
-  user ? `${user.name} ${user.surname}` : "—";
-
-const formatDate = (value: string | null): string =>
-  value ? new Date(value).toLocaleString() : "—";
 
 /**
  * Work space detail: the work containers of this work space and the work
@@ -51,11 +50,14 @@ const WorkAreaWorkspaceDetail = () => {
     workspaceId: string;
   }>();
   const { status } = useAuth();
+  const { can } = useProjectModes(projectId);
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [containers, setContainers] = useState<WorkContainer[]>([]);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
   const [progressOptions, setProgressOptions] = useState<ProgressOption[]>([]);
+  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRef[]>([]);
   const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
   const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
@@ -101,6 +103,8 @@ const WorkAreaWorkspaceDetail = () => {
           api<{
             workContainers: WorkContainer[];
             progressOptions: ProgressOption[] | null;
+            progressWorkflow: ProgressWorkflow | null;
+            userRoles: string[];
           }>(CONTAINERS_ENDPOINT, {
             method: "POST",
             body: JSON.stringify({
@@ -132,6 +136,8 @@ const WorkAreaWorkspaceDetail = () => {
       const workspaceContainers = containersData.workContainers ?? [];
       setContainers(workspaceContainers);
       setProgressOptions(containersData.progressOptions ?? []);
+      setProgressWorkflow(containersData.progressWorkflow ?? null);
+      setUserRoles(containersData.userRoles ?? []);
       // Instances of the containers belonging to this work space.
       const containerIds = new Set(
         workspaceContainers.map((c) => String(c.id))
@@ -157,7 +163,15 @@ const WorkAreaWorkspaceDetail = () => {
       // (the instance detail page navigates here with this parameter).
       const editParam = searchParams.get("edit");
       if (editParam) {
-        void openInstanceUpdate(Number(editParam), true);
+        if (can("U")) {
+          void openInstanceUpdate(Number(editParam), true);
+        } else {
+          // Read-only access: the edit form is not available; drop the
+          // parameter instead of opening a form the backend would reject.
+          const next = new URLSearchParams(searchParams);
+          next.delete("edit");
+          setSearchParams(next, { replace: true });
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,6 +252,19 @@ const WorkAreaWorkspaceDetail = () => {
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
+  // Progress choices offered by the workflow definition for the current
+  // form (create starts from the initial state; update offers only the
+  // transitions the user's role can use). Without a workflow type the
+  // free-text list applies.
+  const containerProgressOptions = progressWorkflow
+    ? allowedProgressOptions(
+        progressWorkflow,
+        userRoles,
+        progress,
+        formMode?.mode === "update" ? "update" : "create"
+      )
+    : progressOptions;
+
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
   const base = `/work-area/${projectId}`;
 
@@ -286,9 +313,11 @@ const WorkAreaWorkspaceDetail = () => {
                   <h2 className="text-xl font-semibold text-foreground">
                     {t("wa.workContainers")}
                   </h2>
-                  <Button size="sm" onClick={openCreate} disabled={busy}>
-                    {t("wa.newContainer")}
-                  </Button>
+                  {can("C") && (
+                    <Button size="sm" onClick={openCreate} disabled={busy}>
+                      {t("wa.newContainer")}
+                    </Button>
+                  )}
                 </div>
 
                 {formMode && (
@@ -391,12 +420,21 @@ const WorkAreaWorkspaceDetail = () => {
                         className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
                       >
                         <option value="">—</option>
-                        {(progressOptions ?? []).map((option) => (
-                          <option key={option.value} value={option.value}>
+                        {containerProgressOptions.map((option) => (
+                          <option
+                            key={option.value}
+                            value={option.value}
+                            title={option.description || option.label}
+                          >
                             {option.label}
                           </option>
                         ))}
                       </select>
+                      {progressDescription(progressWorkflow, progress) && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {progressDescription(progressWorkflow, progress)}
+                        </p>
+                      )}
                     </div>
                     {formError && (
                       <p role="alert" className="text-sm text-destructive">
@@ -423,94 +461,15 @@ const WorkAreaWorkspaceDetail = () => {
                     {t("wa.emptyContainers")}
                   </p>
                 ) : (
-                  <table className="w-full border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-2 py-2">{t("wa.identifier")}</th>
-                        <th className="px-2 py-2">{t("wa.name")}</th>
-                        <th className="px-2 py-2">{t("wa.progress")}</th>
-                        <th className="px-2 py-2">{t("wa.author")}</th>
-                        <th className="px-2 py-2">{t("wa.instances")}</th>
-                        <th className="px-2 py-2">{t("wa.updated")}</th>
-                        <th className="px-2 py-2" aria-label="actions" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {containers.map((container) => (
-                        <tr key={container.id} className="border-b hover:bg-muted/40">
-                          <td className="px-2 py-2 font-mono text-xs text-muted-foreground">
-                            {container.identifier}
-                          </td>
-                          <td className="px-2 py-2 font-medium text-foreground">
-                            <Link
-                              to={`${base}/work-containers/${container.id}`}
-                              className="hover:underline"
-                            >
-                              {container.name}
-                            </Link>
-                            {container.title && (
-                              <span className="ml-2 text-muted-foreground">
-                                — {container.title}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {container.progress ?? "—"}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {formatUser(container.author)}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {container.instanceCount}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {formatDate(container.updatedAt)}
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openUpdate(container)}
-                              >
-                                {t("wa.edit")}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={async () => {
-                                  if (
-                                    !window.confirm(
-                                      t("wa.deleteContainerConfirm", {
-                                        name: container.name,
-                                      })
-                                    )
-                                  ) {
-                                    return;
-                                  }
-                                  try {
-                                    await api(CONTAINERS_ENDPOINT, {
-                                      method: "POST",
-                                      body: JSON.stringify({
-                                        operation: "delete",
-                                        id: container.id,
-                                      }),
-                                    });
-                                    toast.success(t("wa.containerDeleted"));
-                                    await load();
-                                  } catch (err) {
-                                    toast.error(translate(err));
-                                  }
-                                }}
-                              >
-                                {t("wa.delete")}
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <WorkAreaContainersTable
+                    base={base}
+                    containers={containers}
+                    progressWorkflow={progressWorkflow}
+                    canEdit={can("U")}
+                    canDelete={can("D")}
+                    onEdit={openUpdate}
+                    onDeleted={() => void load()}
+                  />
                 )}
               </section>
               )}
@@ -521,7 +480,7 @@ const WorkAreaWorkspaceDetail = () => {
                   <h2 className="text-xl font-semibold text-foreground">
                     {t("wa.workInstances")}
                   </h2>
-                  {!editForm && (
+                  {!editForm && can("C") && (
                     <Button
                       size="sm"
                       asChild
@@ -545,7 +504,12 @@ const WorkAreaWorkspaceDetail = () => {
                       templates={templates}
                       customTypes={customTypes}
                       users={users}
-                      progressOptions={progressOptions}
+                      progressOptions={allowedProgressOptions(
+                        progressWorkflow,
+                        userRoles,
+                        editForm.progress,
+                        "update"
+                      )}
                       busy={editBusy}
                       setBusy={setEditBusy}
                       onSaved={() => {
@@ -561,47 +525,11 @@ const WorkAreaWorkspaceDetail = () => {
                     {t("wa.emptyInstances")}
                   </p>
                 ) : (
-                  <table className="w-full border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-2 py-2">{t("wa.instanceId")}</th>
-                        <th className="px-2 py-2">{t("wa.name")}</th>
-                        <th className="px-2 py-2">{t("wa.container")}</th>
-                        <th className="px-2 py-2">{t("wa.progress")}</th>
-                        <th className="px-2 py-2">{t("wa.assignees")}</th>
-                        <th className="px-2 py-2">{t("wa.updated")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {instances.map((instance) => (
-                        <tr key={instance.id} className="border-b hover:bg-muted/40">
-                          <td className="px-2 py-2 font-mono text-xs text-muted-foreground">
-                            {instance.instanceId}
-                          </td>
-                          <td className="px-2 py-2 font-medium text-foreground">
-                            <Link
-                              to={`${base}/work-instances/${instance.id}`}
-                              className="hover:underline"
-                            >
-                              {instance.name}
-                            </Link>
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {instance.workContainerName}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {instance.progress ?? "—"}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {(instance.assigneeIds ?? []).join(", ") || "—"}
-                          </td>
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {formatDate(instance.updatedAt)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <WorkAreaInstancesTable
+                    base={base}
+                    instances={instances}
+                    progressWorkflow={progressWorkflow}
+                  />
                 )}
               </section>
             </>

@@ -3,11 +3,14 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
+import { progressDescription } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import {
   AttachmentValue,
+  ProgressWorkflow,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -59,12 +62,14 @@ const WorkAreaInstanceDetail = () => {
     instanceId: string;
   }>();
   const { status } = useAuth();
+  const { can } = useProjectModes(projectId);
   const navigate = useNavigate();
 
   const [instance, setInstance] = useState<WorkInstance | null>(null);
   const [containerWorkspaceId, setContainerWorkspaceId] = useState<
     number | null
   >(null);
+  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -86,17 +91,21 @@ const WorkAreaInstanceDetail = () => {
           body: JSON.stringify({ operation: "get", id: Number(instanceId) }),
         }),
         projectId
-          ? api<{ workContainers: WorkContainer[] }>(CONTAINERS_ENDPOINT, {
+          ? api<{
+              workContainers: WorkContainer[];
+              progressWorkflow: ProgressWorkflow | null;
+            }>(CONTAINERS_ENDPOINT, {
               method: "POST",
               body: JSON.stringify({
                 operation: "list",
                 projectId: Number(projectId),
               }),
             })
-          : Promise.resolve({ workContainers: [] }),
+          : Promise.resolve({ workContainers: [], progressWorkflow: null }),
       ]);
       const foundInstance = data.workInstance ?? null;
       setInstance(foundInstance);
+      setProgressWorkflow(containersData.progressWorkflow ?? null);
       if (foundInstance) {
         const container = containersData.workContainers?.find(
           (item) =>
@@ -236,7 +245,14 @@ const WorkAreaInstanceDetail = () => {
                       {t("wa.progress")}
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
-                      {instance.progress ?? "—"}
+                      <span
+                        title={progressDescription(
+                          progressWorkflow,
+                          instance.progress
+                        )}
+                      >
+                        {instance.progress ?? "—"}
+                      </span>
                     </dd>
                   </div>
                   <div>
@@ -284,18 +300,20 @@ const WorkAreaInstanceDetail = () => {
                 <h2 className="text-xl font-semibold text-foreground">
                   {t("wa.fields")}
                 </h2>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    navigate(
-                      containerWorkspaceId != null
-                        ? `${base}/workspaces/${containerWorkspaceId}?edit=${instance.id}`
-                        : `${base}/workspaces`
-                    )
-                  }
-                >
-                  {t("wa.edit")}
-                </Button>
+                {can("U") && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      navigate(
+                        containerWorkspaceId != null
+                          ? `${base}/workspaces/${containerWorkspaceId}?edit=${instance.id}`
+                          : `${base}/workspaces`
+                      )
+                    }
+                  >
+                    {t("wa.edit")}
+                  </Button>
+                )}
               </div>
 
               {instance.fields.length === 0 ? (

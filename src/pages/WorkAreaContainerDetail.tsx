@@ -4,8 +4,15 @@ import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
+import { progressDescription } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
-import { HistoryEntry, UserRef, WorkContainer, WorkInstance } from "@/lib/types";
+import {
+  HistoryEntry,
+  ProgressWorkflow,
+  UserRef,
+  WorkContainer,
+  WorkInstance,
+} from "@/lib/types";
 
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
 const INSTANCES_ENDPOINT = "/api/my/v1/work-instances";
@@ -29,6 +36,7 @@ const WorkAreaContainerDetail = () => {
   const { status } = useAuth();
 
   const [container, setContainer] = useState<WorkContainer | null>(null);
+  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +54,10 @@ const WorkAreaContainerDetail = () => {
     setLoading(true);
     setNotFound(false);
     try {
-      const listData = await api<{ workContainers: WorkContainer[] }>(
+      const listData = await api<{
+        workContainers: WorkContainer[];
+        progressWorkflow: ProgressWorkflow | null;
+      }>(
         CONTAINERS_ENDPOINT,
         {
           method: "POST",
@@ -65,6 +76,7 @@ const WorkAreaContainerDetail = () => {
         return;
       }
       setContainer(found);
+      setProgressWorkflow(listData.progressWorkflow ?? null);
       const [historyData, instancesData] = await Promise.all([
         api<{ history: HistoryEntry[] }>(CONTAINERS_ENDPOINT, {
           method: "POST",
@@ -159,7 +171,14 @@ const WorkAreaContainerDetail = () => {
                       {t("wa.progress")}
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
-                      {container.progress ?? "—"}
+                      <span
+                        title={progressDescription(
+                          progressWorkflow,
+                          container.progress
+                        )}
+                      >
+                        {container.progress ?? "—"}
+                      </span>
                     </dd>
                   </div>
                   <div>
@@ -271,7 +290,14 @@ const WorkAreaContainerDetail = () => {
                           </Link>
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">
-                          {instance.progress ?? "—"}
+                          <span
+                            title={progressDescription(
+                              progressWorkflow,
+                              instance.progress
+                            )}
+                          >
+                            {instance.progress ?? "—"}
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">
                           {formatDate(instance.updatedAt)}

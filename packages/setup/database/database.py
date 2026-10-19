@@ -337,6 +337,23 @@ def main(args, ctx=None):
                     " VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
                     (key, value),
                 )
+            # Login name / password policy defaults (administrator-
+            # configurable in the Security Settings page): strong password
+            # complexity and short alphanumeric-only login names.
+            for key, value in (
+                ("password_require_uppercase", "true"),
+                ("password_require_lowercase", "true"),
+                ("password_require_digit", "true"),
+                ("password_require_special", "true"),
+                ("login_name_alnum_only", "true"),
+                ("login_name_min_length", "3"),
+                ("login_name_max_length", "32"),
+            ):
+                cur.execute(
+                    'INSERT INTO "MiniPLM"."settings" (key, value)'
+                    " VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+                    (key, value),
+                )
             # Idempotent seed of the search-results table columns
             # (administrator-configurable in the Configuration page): the
             # extra columns shown next to name/title, per result category.

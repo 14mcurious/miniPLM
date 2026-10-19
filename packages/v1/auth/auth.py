@@ -27,6 +27,14 @@ WRONG_CREDENTIALS = "wrong credentials"
 OTP_MAX_ATTEMPTS = 5
 SYSADMIN_GROUP = "SysAdmin"
 
+# Administrator-configurable security policy bounds (Security Settings page).
+MIN_PASSWORD_LENGTH_MIN = 1
+MIN_PASSWORD_LENGTH_MAX = 64
+LOGIN_NAME_LENGTH_MIN = 1
+LOGIN_NAME_LENGTH_MAX = 64
+DEFAULT_LOGIN_NAME_MIN_LENGTH = 3
+DEFAULT_LOGIN_NAME_MAX_LENGTH = 32
+
 USER_SELECT = (
     "SELECT id, login_name, password_hash, email, name, surname, company,"
     " notify_email, is_disabled FROM \"MiniPLM\".\"users\" WHERE login_name = %s"
@@ -84,6 +92,50 @@ def get_setting(cur, key, default):
         except (TypeError, ValueError):
             pass
     return default
+
+
+def get_bool_setting(cur, key, default):
+    cur.execute(
+        'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
+        (key,),
+    )
+    row = cur.fetchone()
+    if row:
+        return str(row[0]).strip().lower() == "true"
+    return default
+
+
+def parse_bool(value):
+    """Coerce a submitted boolean-ish value; return None when invalid."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return value == 1
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1"):
+            return True
+        if lowered in ("false", "0"):
+            return False
+    return None
+
+
+def get_security_policy(cur):
+    """Administrator-configurable login/password policy (Security Settings)."""
+    return {
+        "minPasswordLength": get_setting(cur, "min_password_length", 12),
+        "requireUppercase": get_bool_setting(cur, "password_require_uppercase", True),
+        "requireLowercase": get_bool_setting(cur, "password_require_lowercase", True),
+        "requireDigit": get_bool_setting(cur, "password_require_digit", True),
+        "requireSpecial": get_bool_setting(cur, "password_require_special", True),
+        "loginNameAlnumOnly": get_bool_setting(cur, "login_name_alnum_only", True),
+        "loginNameMinLength": get_setting(
+            cur, "login_name_min_length", DEFAULT_LOGIN_NAME_MIN_LENGTH
+        ),
+        "loginNameMaxLength": get_setting(
+            cur, "login_name_max_length", DEFAULT_LOGIN_NAME_MAX_LENGTH
+        ),
+    }
 
 
 def session_duration_seconds(cur):
@@ -533,12 +585,119 @@ def do_get_settings(ctx, args):
         )
         row = cur.fetchone()
         provider = (row[0] if row else "none") or "none"
+        policy = get_security_policy(cur)
     return {
         "ok": True,
         "sessionDurationHours": duration_hours,
         "sessionWarningMinutes": warning_minutes,
         "otpTtlSeconds": otp_ttl,
         "emailProvider": provider,
+        **policy,
+    }
+
+
+def do_update_password_policy(ctx, args, data):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+
+    try:
+        min_length = int(data.get("minPasswordLength"))
+    except (TypeError, ValueError):
+        return fail("auth.error.invalidPasswordPolicy")
+    if min_length < MIN_PASSWORD_LENGTH_MIN or min_length > MIN_PASSWORD_LENGTH_MAX:
+        return fail(
+            "auth.error.invalidPasswordPolicy",
+            min=MIN_PASSWORD_LENGTH_MIN,
+            max=MIN_PASSWORD_LENGTH_MAX,
+        )
+    flags = {}
+    for field, key in (
+        ("requireUppercase", "password_require_uppercase"),
+        ("requireLowercase", "password_require_lowercase"),
+        ("requireDigit", "password_require_digit"),
+        ("requireSpecial", "password_require_special"),
+    ):
+        value = parse_bool(data.get(field))
+        if value is None:
+            return fail("auth.error.invalidPasswordPolicy")
+        flags[key] = value
+
+    with ctx.POSTGRESQL.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
+        cur.execute(
+            'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+            " ON CONFLICT (key) DO UPDATE SET value = %s",
+            ("min_password_length", str(min_length), str(min_length)),
+        )
+        for key, value in flags.items():
+            text = "true" if value else "false"
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (key, text, text),
+            )
+    ctx.POSTGRESQL.commit()
+    return {
+        "ok": True,
+        "minPasswordLength": min_length,
+        "requireUppercase": flags["password_require_uppercase"],
+        "requireLowercase": flags["password_require_lowercase"],
+        "requireDigit": flags["password_require_digit"],
+        "requireSpecial": flags["password_require_special"],
+    }
+
+
+def do_update_login_policy(ctx, args, data):
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+
+    alnum_only = parse_bool(data.get("loginNameAlnumOnly"))
+    if alnum_only is None:
+        return fail("auth.error.invalidLoginPolicy")
+    try:
+        min_length = int(data.get("loginNameMinLength"))
+        max_length = int(data.get("loginNameMaxLength"))
+    except (TypeError, ValueError):
+        return fail("auth.error.invalidLoginPolicy")
+    if (
+        min_length < LOGIN_NAME_LENGTH_MIN
+        or min_length > LOGIN_NAME_LENGTH_MAX
+        or max_length < LOGIN_NAME_LENGTH_MIN
+        or max_length > LOGIN_NAME_LENGTH_MAX
+        or max_length < min_length
+    ):
+        return fail(
+            "auth.error.invalidLoginPolicy",
+            min=LOGIN_NAME_LENGTH_MIN,
+            max=LOGIN_NAME_LENGTH_MAX,
+        )
+
+    with ctx.POSTGRESQL.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
+        for key, value in (
+            ("login_name_alnum_only", "true" if alnum_only else "false"),
+            ("login_name_min_length", str(min_length)),
+            ("login_name_max_length", str(max_length)),
+        ):
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (key, value, value),
+            )
+    ctx.POSTGRESQL.commit()
+    return {
+        "ok": True,
+        "loginNameAlnumOnly": alnum_only,
+        "loginNameMinLength": min_length,
+        "loginNameMaxLength": max_length,
     }
 
 
@@ -609,6 +768,10 @@ def main(args, ctx=None):
             return do_get_settings(ctx, args)
         if operation in ("update-session-settings", "updatesettings"):
             return do_update_session_settings(ctx, args, data)
+        if operation in ("update-password-policy", "updatepasswordpolicy"):
+            return do_update_password_policy(ctx, args, data)
+        if operation in ("update-login-policy", "updateloginpolicy"):
+            return do_update_login_policy(ctx, args, data)
         return fail("auth.error.request")
     except Exception as exc:
         try:

@@ -6,11 +6,16 @@ import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
+import {
+  DEFAULT_SECURITY_POLICY,
+  loginNameErrorKey,
+  normalizeSecurityPolicy,
+  passwordErrorKey,
+  policyErrorParams,
+  type SecurityPolicy,
+} from "@/lib/security-policy";
 
 const USERS_ENDPOINT = "/api/my/v1/users";
-const DEFAULT_MIN_PASSWORD_LENGTH = 12;
-const LOGIN_NAME_RE = /^[A-Za-z0-9]+$/;
-const SPECIAL_CHAR_RE = /[^A-Za-z0-9]/;
 
 interface GroupInfo {
   name: string;
@@ -30,22 +35,11 @@ interface SavedUser {
   groups: GroupInfo[];
 }
 
-/** Client-side mirror of the server password policy; returns an i18n key. */
-function passwordErrorKey(password: string, minLength: number): string | null {
-  if (!password) return "users.error.passwordRequired";
-  if (password.length < minLength) return "users.error.passwordTooShort";
-  if (!SPECIAL_CHAR_RE.test(password)) return "users.error.passwordSpecial";
-  if (!/\d/.test(password)) return "users.error.passwordDigit";
-  if (!/[A-Z]/.test(password)) return "users.error.passwordUppercase";
-  if (!/[a-z]/.test(password)) return "users.error.passwordLowercase";
-  return null;
-}
-
 const NewUser = () => {
   const { t } = useI18n();
 
-  const [minPasswordLength, setMinPasswordLength] = useState(
-    DEFAULT_MIN_PASSWORD_LENGTH
+  const [policy, setPolicy] = useState<SecurityPolicy>(
+    DEFAULT_SECURITY_POLICY
   );
   const [loginName, setLoginName] = useState("");
   const [password, setPassword] = useState("");
@@ -72,26 +66,24 @@ const NewUser = () => {
     Record<string, string>
   >({});
 
-  // Load the configurable password policy from the backend.
+  // Load the configurable security policy (password + login name) from the
+  // backend; fall back to the defaults when the endpoint is unreachable.
   useEffect(() => {
-    api<{ minPasswordLength: number }>(USERS_ENDPOINT)
-      .then((data) => setMinPasswordLength(data.minPasswordLength))
+    api<Partial<SecurityPolicy>>(USERS_ENDPOINT)
+      .then((data) => setPolicy(normalizeSecurityPolicy(data)))
       .catch(() => {
         // keep the default policy when the endpoint is unreachable
       });
   }, []);
 
   const renderError = (key: string | null) =>
-    key ? t(key, { min: minPasswordLength }) : null;
+    key ? t(key, policyErrorParams(key, policy)) : null;
 
   const validateCreate = (): Record<string, string> => {
     const errors: Record<string, string> = {};
-    if (!loginName.trim()) {
-      errors.loginName = "users.error.loginNameRequired";
-    } else if (!LOGIN_NAME_RE.test(loginName.trim())) {
-      errors.loginName = "users.error.loginNameFormat";
-    }
-    const pwError = passwordErrorKey(password, minPasswordLength);
+    const loginError = loginNameErrorKey(loginName, policy);
+    if (loginError) errors.loginName = loginError;
+    const pwError = passwordErrorKey(password, policy);
     if (pwError) errors.password = pwError;
     if (!verifyPassword) {
       errors.verifyPassword = "users.error.verifyRequired";
@@ -173,7 +165,7 @@ const NewUser = () => {
   const handleConfirmChangePassword = async () => {
     if (!savedUser || busy) return;
     const errors: Record<string, string> = {};
-    const pwError = passwordErrorKey(newPassword, minPasswordLength);
+    const pwError = passwordErrorKey(newPassword, policy);
     if (pwError) errors.newPassword = pwError;
     if (!newPasswordVerify) {
       errors.newPasswordVerify = "users.error.verifyRequired";
@@ -250,11 +242,22 @@ const NewUser = () => {
                 disabled={locked || saving}
                 className={fieldClass}
               />
-              {renderError(fieldErrors.loginName) && (
+              {fieldErrors.loginName && (
                 <p className={fieldErrorClass}>
-                  {t(fieldErrors.loginName)}
+                  {renderError(fieldErrors.loginName)}
                 </p>
               )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t(
+                  policy.loginNameAlnumOnly
+                    ? "newUser.loginNameHint"
+                    : "newUser.loginNameHintExtended",
+                  {
+                    min: policy.loginNameMinLength,
+                    max: policy.loginNameMaxLength,
+                  }
+                )}
+              </p>
             </div>
 
             <div>
@@ -270,9 +273,9 @@ const NewUser = () => {
                 disabled={locked || saving}
                 className={fieldClass}
               />
-              {renderError(fieldErrors.password) && (
+              {fieldErrors.password && (
                 <p className={fieldErrorClass}>
-                  {t(fieldErrors.password, { min: minPasswordLength })}
+                  {renderError(fieldErrors.password)}
                 </p>
               )}
             </div>
@@ -290,9 +293,9 @@ const NewUser = () => {
                 disabled={locked || saving}
                 className={fieldClass}
               />
-              {renderError(fieldErrors.verifyPassword) && (
+              {fieldErrors.verifyPassword && (
                 <p className={fieldErrorClass}>
-                  {t(fieldErrors.verifyPassword)}
+                  {renderError(fieldErrors.verifyPassword)}
                 </p>
               )}
             </div>
@@ -310,8 +313,10 @@ const NewUser = () => {
                 disabled={locked || saving}
                 className={fieldClass}
               />
-              {renderError(fieldErrors.email) && (
-                <p className={fieldErrorClass}>{t(fieldErrors.email)}</p>
+              {fieldErrors.email && (
+                <p className={fieldErrorClass}>
+                  {renderError(fieldErrors.email)}
+                </p>
               )}
             </div>
 
@@ -328,8 +333,10 @@ const NewUser = () => {
                   disabled={locked || saving}
                   className={fieldClass}
                 />
-                {renderError(fieldErrors.name) && (
-                  <p className={fieldErrorClass}>{t(fieldErrors.name)}</p>
+                {fieldErrors.name && (
+                  <p className={fieldErrorClass}>
+                    {renderError(fieldErrors.name)}
+                  </p>
                 )}
               </div>
               <div>
@@ -344,9 +351,9 @@ const NewUser = () => {
                   disabled={locked || saving}
                   className={fieldClass}
                 />
-                {renderError(fieldErrors.surname) && (
+                {fieldErrors.surname && (
                   <p className={fieldErrorClass}>
-                    {t(fieldErrors.surname)}
+                    {renderError(fieldErrors.surname)}
                   </p>
                 )}
               </div>
@@ -470,11 +477,9 @@ const NewUser = () => {
                     disabled={busy}
                     className={fieldClass}
                   />
-                  {renderError(changePasswordErrors.newPassword) && (
+                  {changePasswordErrors.newPassword && (
                     <p className={fieldErrorClass}>
-                      {t(changePasswordErrors.newPassword, {
-                        min: minPasswordLength,
-                      })}
+                      {renderError(changePasswordErrors.newPassword)}
                     </p>
                   )}
                 </div>
@@ -491,9 +496,9 @@ const NewUser = () => {
                     disabled={busy}
                     className={fieldClass}
                   />
-                  {renderError(changePasswordErrors.newPasswordVerify) && (
+                  {changePasswordErrors.newPasswordVerify && (
                     <p className={fieldErrorClass}>
-                      {t(changePasswordErrors.newPasswordVerify)}
+                      {renderError(changePasswordErrors.newPasswordVerify)}
                     </p>
                   )}
                 </div>

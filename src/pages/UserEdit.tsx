@@ -6,6 +6,13 @@ import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
+import {
+  DEFAULT_SECURITY_POLICY,
+  normalizeSecurityPolicy,
+  passwordErrorKey,
+  policyErrorParams,
+  type SecurityPolicy,
+} from "@/lib/security-policy";
 
 const USERS_ENDPOINT = "/api/my/v1/users";
 
@@ -42,6 +49,9 @@ const UserEdit = () => {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [policy, setPolicy] = useState<SecurityPolicy>(
+    DEFAULT_SECURITY_POLICY
+  );
 
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
@@ -76,6 +86,13 @@ const UserEdit = () => {
 
   useEffect(() => {
     load();
+    // Load the configurable security policy for client-side password
+    // validation; fall back to the defaults when the endpoint fails.
+    api<Partial<SecurityPolicy>>(USERS_ENDPOINT)
+      .then((data) => setPolicy(normalizeSecurityPolicy(data)))
+      .catch(() => {
+        // keep the default policy
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
@@ -106,8 +123,9 @@ const UserEdit = () => {
   const handleConfirmChangePassword = async () => {
     if (!user || busy) return;
     const errors: Record<string, string> = {};
-    if (!newPassword) {
-      errors.newPassword = "users.error.passwordRequired";
+    const pwError = passwordErrorKey(newPassword, policy);
+    if (pwError) {
+      errors.newPassword = pwError;
     }
     if (!newPasswordVerify) {
       errors.newPasswordVerify = "users.error.verifyRequired";
@@ -155,7 +173,7 @@ const UserEdit = () => {
   const fieldClass = "w-full";
   const fieldErrorClass = "mt-1 text-sm text-destructive";
   const renderPasswordError = (key: string | null) =>
-    key ? t(key) : null;
+    key ? t(key, policyErrorParams(key, policy)) : null;
 
   return (
     <>

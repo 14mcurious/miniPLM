@@ -4,7 +4,10 @@ import re
 import time
 
 DEFAULT_MIN_PASSWORD_LENGTH = 12
+DEFAULT_LOGIN_NAME_MIN_LENGTH = 3
+DEFAULT_LOGIN_NAME_MAX_LENGTH = 32
 LOGIN_NAME_RE = re.compile(r"^[A-Za-z0-9]+$")
+LOGIN_NAME_EXTENDED_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 SPECIAL_CHAR_RE = re.compile(r"[^A-Za-z0-9]")
 
 USER_COLUMNS = (
@@ -152,21 +155,94 @@ def get_min_password_length(cur):
     return DEFAULT_MIN_PASSWORD_LENGTH
 
 
-def validate_password(password, min_length):
+def get_bool_setting(cur, key, default):
+    cur.execute(
+        "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
+        (key,),
+    )
+    row = cur.fetchone()
+    if row:
+        return str(row[0]).strip().lower() == "true"
+    return default
+
+
+def get_int_setting(cur, key, default, minimum=1, maximum=64):
+    cur.execute(
+        "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
+        (key,),
+    )
+    row = cur.fetchone()
+    if row:
+        try:
+            return min(maximum, max(minimum, int(row[0])))
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def get_security_policy(cur):
+    """Administrator-configurable login/password policy (Security Settings)."""
+    return {
+        "minPasswordLength": get_min_password_length(cur),
+        "requireUppercase": get_bool_setting(
+            cur, "password_require_uppercase", True
+        ),
+        "requireLowercase": get_bool_setting(
+            cur, "password_require_lowercase", True
+        ),
+        "requireDigit": get_bool_setting(cur, "password_require_digit", True),
+        "requireSpecial": get_bool_setting(cur, "password_require_special", True),
+        "loginNameAlnumOnly": get_bool_setting(
+            cur, "login_name_alnum_only", True
+        ),
+        "loginNameMinLength": get_int_setting(
+            cur,
+            "login_name_min_length",
+            DEFAULT_LOGIN_NAME_MIN_LENGTH,
+            minimum=1,
+            maximum=64,
+        ),
+        "loginNameMaxLength": get_int_setting(
+            cur,
+            "login_name_max_length",
+            DEFAULT_LOGIN_NAME_MAX_LENGTH,
+            minimum=1,
+            maximum=64,
+        ),
+    }
+
+
+def validate_password(password, policy):
     """Return the i18n error key for an invalid password, or None."""
     if not password:
-        return "users.error.passwordRequired"
-    if len(password) < min_length:
-        return "users.error.passwordTooShort"
-    if not SPECIAL_CHAR_RE.search(password):
-        return "users.error.passwordSpecial"
-    if not re.search(r"\d", password):
-        return "users.error.passwordDigit"
-    if not re.search(r"[A-Z]", password):
-        return "users.error.passwordUppercase"
-    if not re.search(r"[a-z]", password):
-        return "users.error.passwordLowercase"
-    return None
+        return "users.error.passwordRequired", None
+    if len(password) < policy["minPasswordLength"]:
+        return "users.error.passwordTooShort", {"min": policy["minPasswordLength"]}
+    if policy["requireSpecial"] and not SPECIAL_CHAR_RE.search(password):
+        return "users.error.passwordSpecial", None
+    if policy["requireDigit"] and not re.search(r"\d", password):
+        return "users.error.passwordDigit", None
+    if policy["requireUppercase"] and not re.search(r"[A-Z]", password):
+        return "users.error.passwordUppercase", None
+    if policy["requireLowercase"] and not re.search(r"[a-z]", password):
+        return "users.error.passwordLowercase", None
+    return None, None
+
+
+def validate_login_name(login_name, policy):
+    """Return (i18n error key, params) for an invalid login name, or (None, None)."""
+    if not login_name:
+        return "users.error.loginNameRequired", None
+    if len(login_name) < policy["loginNameMinLength"]:
+        return "users.error.loginNameTooShort", {"min": policy["loginNameMinLength"]}
+    if len(login_name) > policy["loginNameMaxLength"]:
+        return "users.error.loginNameTooLong", {"max": policy["loginNameMaxLength"]}
+    pattern = LOGIN_NAME_RE if policy["loginNameAlnumOnly"] else LOGIN_NAME_EXTENDED_RE
+    if not pattern.match(login_name):
+        if policy["loginNameAlnumOnly"]:
+            return "users.error.loginNameFormat", None
+        return "users.error.loginNameFormatExtended", None
+    return None, None
 
 
 def user_to_dict(row):
@@ -347,10 +423,6 @@ def create_user(conn, data):
     company = str(company).strip() if company not in (None, "") else None
     notify_email = bool(data.get("notifyEmail", data.get("notify_email", False)))
 
-    if not login_name:
-        return fail("users.error.loginNameRequired")
-    if not LOGIN_NAME_RE.match(login_name):
-        return fail("users.error.loginNameFormat")
     if not email:
         return fail("users.error.emailRequired")
     if not name:
@@ -365,12 +437,13 @@ def create_user(conn, data):
         return fail("users.error.verifyMismatch")
 
     with conn.cursor() as cur:
-        min_length = get_min_password_length(cur)
-        password_error = validate_password(password, min_length)
+        policy = get_security_policy(cur)
+        error_key, error_params = validate_login_name(login_name, policy)
+        if error_key:
+            return fail(error_key, **(error_params or {}))
+        password_error, error_params = validate_password(password, policy)
         if password_error:
-            if password_error == "users.error.passwordTooShort":
-                return fail(password_error, min=min_length)
-            return fail(password_error)
+            return fail(password_error, **(error_params or {}))
 
         cur.execute(
             "SELECT 1 FROM \"MiniPLM\".\"users\" WHERE login_name = %s",
@@ -464,12 +537,10 @@ def change_password(conn, data, resource_name):
         )
         if not cur.fetchone():
             return fail("users.error.userNotFound")
-        min_length = get_min_password_length(cur)
-        password_error = validate_password(password, min_length)
+        policy = get_security_policy(cur)
+        password_error, error_params = validate_password(password, policy)
         if password_error:
-            if password_error == "users.error.passwordTooShort":
-                return fail(password_error, min=min_length)
-            return fail(password_error)
+            return fail(password_error, **(error_params or {}))
         password_hash = bcrypt.hashpw(
             password.encode("utf-8"), bcrypt.gensalt(rounds=10)
         ).decode("utf-8")
@@ -507,8 +578,8 @@ def main(args, ctx=None):
     try:
         if method == "GET":
             with conn.cursor() as cur:
-                min_length = get_min_password_length(cur)
-            return {"ok": True, "minPasswordLength": min_length}
+                policy = get_security_policy(cur)
+            return {"ok": True, **policy}
 
         operation = str(data.get("operation") or "").strip().lower()
         mutating = operation in (

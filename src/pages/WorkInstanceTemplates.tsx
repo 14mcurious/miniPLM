@@ -135,6 +135,19 @@ const WorkInstanceTemplates = () => {
     );
   };
 
+  // Move a field up or down: the definition order is the order in which
+  // the fields are rendered by work instance and work container forms.
+  const moveField = (index: number, dir: -1 | 1): void => {
+    setFields((prev) => {
+      const target = index + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      return next;
+    });
+  };
+
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
@@ -330,7 +343,7 @@ const WorkInstanceTemplates = () => {
                 {fields.map((field, index) => (
                   <div
                     key={index}
-                    className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_130px_1fr_auto]"
+                    className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_130px_1fr_auto_auto]"
                   >
                     <Input
                       id={`tpl-field-name-${index}`}
@@ -388,6 +401,30 @@ const WorkInstanceTemplates = () => {
                         disabled={busy}
                       />
                     )}
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        type="button"
+                        aria-label={t("wa.moveUp")}
+                        title={t("wa.moveUp")}
+                        disabled={busy || index === 0}
+                        onClick={() => moveField(index, -1)}
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        type="button"
+                        aria-label={t("wa.moveDown")}
+                        title={t("wa.moveDown")}
+                        disabled={busy || index === fields.length - 1}
+                        onClick={() => moveField(index, 1)}
+                      >
+                        ↓
+                      </Button>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
@@ -400,7 +437,7 @@ const WorkInstanceTemplates = () => {
                       {t("wa.remove")}
                     </Button>
                     {field.type === "custom" && (
-                      <div className="sm:col-span-4">
+                      <div className="sm:col-span-5">
                         <Input
                           id={`tpl-field-custom-desc-${index}`}
                           name={`tplFieldCustomDescription${index}`}

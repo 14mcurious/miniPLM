@@ -12,12 +12,13 @@ import { SearchGroup, SearchRow } from "@/lib/types";
 const SEARCH_ENDPOINT = "/api/my/v1/search";
 
 const CATEGORY_KEYS: Record<string, string> = {
-  workspace: "wa.categoryWorkspace",
   workcontainer: "wa.categoryContainer",
   workinstance: "wa.categoryInstance",
 };
 
 const COLUMN_KEYS: Record<string, string> = {
+  id: "wa.searchId",
+  name: "wa.name",
   title: "wa.title",
   parent: "wa.parentWorkspace",
   author: "wa.author",
@@ -44,9 +45,10 @@ function formatCell(key: string, value: unknown): string {
 
 /**
  * Full-text search over the elements of the current work area with a
- * Lucene/Solr-like query language. Results are grouped by category
- * (work spaces, work containers, work instances); the extra table columns
- * are configured by the administrator in the Configuration area.
+ * Lucene/Solr-like query language. Results are presented as tables
+ * grouped by category (work containers, work instances); the columns of
+ * each table (default: id, title, progress, updated) are configured by
+ * the administrator in the Configuration area.
  */
 const WorkAreaSearch = () => {
   const { t } = useI18n();
@@ -121,8 +123,6 @@ const WorkAreaSearch = () => {
       navigate(`${base}/work-containers/${row.dbId}`);
     } else if (category === "workinstance") {
       navigate(`${base}/work-instances/${row.dbId}`);
-    } else {
-      navigate(`${base}/workspaces`);
     }
   };
 
@@ -193,8 +193,6 @@ const WorkAreaSearch = () => {
                       <table className="w-full border-collapse text-sm">
                         <thead>
                           <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            <th className="px-3 py-2">{t("wa.name")}</th>
-                            <th className="px-3 py-2">{t("wa.title")}</th>
                             {(columns[group.category] ?? []).map((key) => (
                               <th key={key} className="px-3 py-2">
                                 {t(COLUMN_KEYS[key] ?? key)}
@@ -208,26 +206,57 @@ const WorkAreaSearch = () => {
                               key={row.id}
                               className="border-b last:border-0 hover:bg-muted/30"
                             >
-                              <td className="px-3 py-2 font-medium text-foreground">
-                                <button
-                                  type="button"
-                                  className="text-left hover:underline"
-                                  onClick={() => goToRow(group.category, row)}
-                                >
-                                  {row.name}
-                                </button>
-                              </td>
-                              <td className="px-3 py-2 text-muted-foreground">
-                                {row.title || "—"}
-                              </td>
-                              {(columns[group.category] ?? []).map((key) => (
-                                <td
-                                  key={key}
-                                  className="px-3 py-2 text-muted-foreground"
-                                >
-                                  {formatCell(key, row.cells[key])}
-                                </td>
-                              ))}
+                              {(columns[group.category] ?? []).map((key) => {
+                                if (key === "id") {
+                                  return (
+                                    <td key={key} className="px-3 py-2">
+                                      <button
+                                        type="button"
+                                        className="text-left font-medium text-foreground hover:underline"
+                                        title={row.name}
+                                        onClick={() =>
+                                          goToRow(group.category, row)
+                                        }
+                                      >
+                                        {row.id}
+                                      </button>
+                                    </td>
+                                  );
+                                }
+                                if (key === "name") {
+                                  return (
+                                    <td key={key} className="px-3 py-2">
+                                      <button
+                                        type="button"
+                                        className="text-left font-medium text-foreground hover:underline"
+                                        onClick={() =>
+                                          goToRow(group.category, row)
+                                        }
+                                      >
+                                        {row.name}
+                                      </button>
+                                    </td>
+                                  );
+                                }
+                                if (key === "title") {
+                                  return (
+                                    <td
+                                      key={key}
+                                      className="px-3 py-2 text-muted-foreground"
+                                    >
+                                      {row.title || "—"}
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td
+                                    key={key}
+                                    className="px-3 py-2 text-muted-foreground"
+                                  >
+                                    {formatCell(key, row.cells[key])}
+                                  </td>
+                                );
+                              })}
                             </tr>
                           ))}
                         </tbody>

@@ -1,10 +1,11 @@
 """MiniPLM work area search.
 
 Searches the elements of the accessible work areas (projects) with a
-Lucene/Solr-like query language. Results are grouped by category
-(work space, work container, work instance) and presented as tables with
-name and title plus the extra columns configured by the administrator in
-the Configuration area (setting search_columns).
+Lucene/Solr-like query language. Results are grouped by category (work
+container, work instance) and presented as tables; the columns of each
+table are configured by the administrator in the Configuration area
+(setting search_columns). The default columns are: id, title, progress,
+updated. Work spaces are not part of the search.
 
 Supported query syntax (subset of Lucene):
   word                 full-text match over name/title/description/etc.
@@ -16,7 +17,6 @@ Supported query syntax (subset of Lucene):
   ( ... )              grouping; adjacent terms imply AND
 
 Queryable fields:
-  workspace:   name, title, parent, author, category
   container:   name, title, description, progress, author, category
   instance:    name, progress, assignees, template, author, category
                plus every template field name (e.g. weight:10, status:done)
@@ -27,7 +27,6 @@ import re
 import time
 
 QUERYABLE = {
-    "workspace": ("name", "title", "parent", "author", "category"),
     "workcontainer": (
         "name",
         "title",
@@ -45,17 +44,33 @@ QUERYABLE = {
         "category",
     ),
 }
-# Extra columns an administrator may enable in the results tables, per
-# category. Name and title are always shown.
+# Columns an administrator may enable in the results tables, per
+# category. id, name and title are full columns like the others; the
+# default set is id, title, progress, updated.
 ALLOWED_COLUMNS = {
-    "workspace": ("title", "parent", "author", "updated"),
-    "workcontainer": ("title", "description", "progress", "author", "updated"),
-    "workinstance": ("progress", "assignees", "template", "author", "updated"),
+    "workcontainer": (
+        "id",
+        "name",
+        "title",
+        "description",
+        "progress",
+        "author",
+        "updated",
+    ),
+    "workinstance": (
+        "id",
+        "name",
+        "title",
+        "progress",
+        "assignees",
+        "template",
+        "author",
+        "updated",
+    ),
 }
 DEFAULT_COLUMNS = {
-    "workspace": ["title", "parent", "updated"],
-    "workcontainer": ["title", "progress", "author", "updated"],
-    "workinstance": ["progress", "assignees", "template", "updated"],
+    "workcontainer": ["id", "title", "progress", "updated"],
+    "workinstance": ["id", "title", "progress", "updated"],
 }
 MAX_RESULTS_PER_CATEGORY = 200
 
@@ -372,28 +387,13 @@ def user_display(cur, user_id):
 
 
 def build_documents(cur, project_ids):
-    """Flatten the accessible elements into searchable documents."""
+    """Flatten the accessible elements into searchable documents.
+
+    Work spaces are intentionally excluded: the search tables present
+    work containers and work instances only.
+    """
     placeholders = ",".join(["%s"] * len(project_ids))
     docs = []
-
-    cur.execute(
-        'SELECT w.id, w.name, w.title, pw.name, w.created_by, w.updated_at'
-        ' FROM "MiniPLM"."workspaces" w'
-        ' LEFT JOIN "MiniPLM"."workspaces" pw ON pw.id = w.parent_id'
-        f' WHERE w.project_id IN ({placeholders})',
-        tuple(project_ids),
-    )
-    for ws_id, name, title, parent_name, created_by, updated_at in cur.fetchall():
-        doc = {
-            "category": "workspace",
-            "id": str(ws_id),
-            "name": name or "",
-            "title": title or "",
-            "parent": parent_name or "",
-            "author": user_display(cur, created_by),
-            "updated": updated_at.isoformat() if updated_at else "",
-        }
-        docs.append(doc)
 
     cur.execute(
         'SELECT c.id, c.identifier, c.name, c.title, c.description, c.progress,'
@@ -482,7 +482,7 @@ def load_columns(cur):
     if not isinstance(parsed, dict):
         parsed = {}
     columns = {}
-    for category in ("workspace", "workcontainer", "workinstance"):
+    for category in ("workcontainer", "workinstance"):
         values = parsed.get(category)
         if not isinstance(values, list):
             values = DEFAULT_COLUMNS[category]
@@ -520,7 +520,7 @@ def do_search(ctx, session, data):
 
     matched = [doc for doc in documents if eval_node(tree, doc)]
     groups = []
-    for category in ("workspace", "workcontainer", "workinstance"):
+    for category in ("workcontainer", "workinstance"):
         rows = [doc for doc in matched if doc["category"] == category]
         rows.sort(key=lambda doc: (doc["name"].lower(), doc["id"]))
         groups.append(
@@ -580,7 +580,7 @@ def do_update_columns(ctx, session, data):
     if not isinstance(raw, dict):
         return fail("search.error.invalidColumns")
     columns = {}
-    for category in ("workspace", "workcontainer", "workinstance"):
+    for category in ("workcontainer", "workinstance"):
         values = raw.get(category)
         if values is None:
             values = []

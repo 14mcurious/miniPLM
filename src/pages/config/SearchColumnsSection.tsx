@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/button";
 const SEARCH_ENDPOINT = "/api/my/v1/search";
 
 const CATEGORY_KEYS: Record<string, string> = {
-  workspace: "wa.categoryWorkspace",
   workcontainer: "wa.categoryContainer",
   workinstance: "wa.categoryInstance",
 };
 
 const COLUMN_KEYS: Record<string, string> = {
+  id: "wa.searchId",
+  name: "wa.name",
   title: "wa.title",
   parent: "wa.parentWorkspace",
   author: "wa.author",
@@ -24,9 +25,8 @@ const COLUMN_KEYS: Record<string, string> = {
 };
 
 /**
- * Administrator configuration of the extra columns shown in the search
- * results tables (per category). Name and title are always shown and are
- * not configurable here.
+ * Administrator configuration of the columns shown in the search results
+ * tables (per category). The default set is id, title, progress, updated.
  */
 const SearchColumnsSection = () => {
   const { t } = useI18n();
@@ -117,7 +117,7 @@ const SearchColumnsSection = () => {
         </div>
       )}
 
-      {(["workspace", "workcontainer", "workinstance"] as const).map(
+      {(["workcontainer", "workinstance"] as const).map(
         (category) => (
           <div key={category} className="rounded-md border p-3">
             <h3 className="mb-2 text-sm font-semibold text-foreground">

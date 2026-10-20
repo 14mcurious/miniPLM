@@ -578,6 +578,34 @@ def attach_progress_workflows(cur, containers):
         container["progressWorkflow"] = template_progress_workflow(
             cur, template_cache[template_id]
         )
+        container["fields"] = order_fields_by_template(
+            container.get("fields"), template_cache[template_id]
+        )
+
+
+def order_fields_by_template(fields, template):
+    """Order the stored field entries by the template definition so the
+    forms and detail views render the fields in the order chosen in the
+    template editor. Fields that are not part of the template (ad-hoc
+    fields) keep their relative order after the template fields."""
+    if not isinstance(fields, list) or not isinstance(template, dict):
+        return fields
+    definition = template.get("definition") or []
+    positions = {}
+    for pos, entry in enumerate(definition):
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").lower()
+            if name and name not in positions:
+                positions[name] = pos
+
+    def sort_key(pair):
+        idx, field = pair
+        name = str(field.get("name") or "").lower() if isinstance(field, dict) else ""
+        if name in positions:
+            return (0, positions[name], idx)
+        return (1, 0, idx)
+
+    return [field for _, field in sorted(enumerate(fields), key=sort_key)]
 
 
 def attach_container_progress_workflow(cur, container):
@@ -593,6 +621,9 @@ def attach_container_progress_workflow(cur, container):
         return
     container["progressWorkflow"] = template_progress_workflow(
         cur, template
+    )
+    container["fields"] = order_fields_by_template(
+        container.get("fields"), template
     )
 
 

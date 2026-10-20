@@ -536,6 +536,34 @@ def attach_progress_workflows(cur, instances):
         instance["progressWorkflow"] = template_progress_workflow(
             cur, template_cache[template_id]
         )
+        instance["fields"] = order_fields_by_template(
+            instance.get("fields"), template_cache[template_id]
+        )
+
+
+def order_fields_by_template(fields, template):
+    """Order the stored field entries by the template definition so the
+    forms and detail views render the fields in the order chosen in the
+    template editor. Fields that are not part of the template (ad-hoc
+    fields) keep their relative order after the template fields."""
+    if not isinstance(fields, list) or not isinstance(template, dict):
+        return fields
+    definition = template.get("definition") or []
+    positions = {}
+    for pos, entry in enumerate(definition):
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").lower()
+            if name and name not in positions:
+                positions[name] = pos
+
+    def sort_key(pair):
+        idx, field = pair
+        name = str(field.get("name") or "").lower() if isinstance(field, dict) else ""
+        if name in positions:
+            return (0, positions[name], idx)
+        return (1, 0, idx)
+
+    return [field for _, field in sorted(enumerate(fields), key=sort_key)]
 
 
 def instance_row_to_dict(row):
@@ -743,6 +771,10 @@ def do_get_by_db_id(ctx, session, instance_db_id):
             instance["progressWorkflow"] = template_progress_workflow(
                 cur, template
             )
+            if template is not None:
+                instance["fields"] = order_fields_by_template(
+                    instance.get("fields"), template
+                )
         cur.execute(
             'SELECT id, login_name, name, surname FROM "MiniPLM"."users"'
             " WHERE id = ANY(%s)",

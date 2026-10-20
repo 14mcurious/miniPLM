@@ -27,7 +27,6 @@ export interface WorkContainer {
   projectName: string;
   workspaceId: number | null;
   workspaceName: string | null;
-  name: string;
   title: string | null;
   description: string | null;
   progress: string | null;
@@ -67,12 +66,12 @@ export interface WorkInstanceField {
 export interface WorkInstance {
   id: number;
   instanceId: string;
-  name: string;
+  title: string;
   projectId: number;
   projectName: string;
   workContainerId: number;
   workContainerIdentifier: string;
-  workContainerName: string;
+  workContainerTitle: string | null;
   templateId: number | null;
   templateName: string | null;
   progress: string | null;
@@ -171,15 +170,9 @@ export interface ProgressWorkflow {
 export interface SearchRow {
   id: string;
   dbId: string;
-  name: string;
+  category: string;
   title: string;
   cells: Record<string, unknown>;
-}
-
-export interface SearchGroup {
-  category: string;
-  count: number;
-  rows: SearchRow[];
 }
 
 export const FIELD_TYPES = [

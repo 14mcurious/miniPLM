@@ -132,7 +132,6 @@ STATEMENTS = [
         "  identifier TEXT NOT NULL UNIQUE,"
         "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
         "  workspace_id BIGINT REFERENCES \"MiniPLM\".\"workspaces\"(id) ON DELETE CASCADE,"
-        "  name TEXT NOT NULL,"
         "  title TEXT,"
         "  description TEXT,"
         "  author_id BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
@@ -180,7 +179,7 @@ STATEMENTS = [
         "  instance_id TEXT NOT NULL UNIQUE,"
         "  project_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"projects\"(id) ON DELETE CASCADE,"
         "  work_container_id BIGINT NOT NULL REFERENCES \"MiniPLM\".\"work_containers\"(id) ON DELETE CASCADE,"
-        "  name TEXT NOT NULL,"
+        "  title TEXT NOT NULL,"
         "  author_id BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
         "  progress TEXT,"
         "  assignees JSONB NOT NULL DEFAULT '[]',"
@@ -310,6 +309,40 @@ STATEMENTS = [
     (
         'CREATE INDEX IF NOT EXISTS work_containers_workspace_idx'
         ' ON "MiniPLM"."work_containers" (workspace_id)'
+    ),
+    # Display field rename: the "name" field of work instances and work
+    # containers is replaced by "title" (free-form string, no character
+    # constraints). Idempotent migration for rows created before the
+    # rename: work_instances.name is renamed to work_instances.title and
+    # work_containers.name is merged into work_containers.title (backfill
+    # the title from the name when it is empty, then drop the column).
+    (
+        "DO $$ BEGIN"
+        " IF EXISTS (SELECT 1 FROM information_schema.columns"
+        "  WHERE table_schema = 'MiniPLM' AND table_name = 'work_instances' AND column_name = 'name')"
+        " THEN"
+        "   IF NOT EXISTS (SELECT 1 FROM information_schema.columns"
+        "    WHERE table_schema = 'MiniPLM' AND table_name = 'work_instances' AND column_name = 'title')"
+        "   THEN"
+        '     ALTER TABLE "MiniPLM"."work_instances" RENAME COLUMN name TO title;'
+        "   ELSE"
+        '     UPDATE "MiniPLM"."work_instances" SET title = name'
+        "     WHERE title IS NULL OR title = '';"
+        '     ALTER TABLE "MiniPLM"."work_instances" DROP COLUMN name;'
+        "   END IF;"
+        " END IF;"
+        " END $$"
+    ),
+    (
+        "DO $$ BEGIN"
+        " IF EXISTS (SELECT 1 FROM information_schema.columns"
+        "  WHERE table_schema = 'MiniPLM' AND table_name = 'work_containers' AND column_name = 'name')"
+        " THEN"
+        '   UPDATE "MiniPLM"."work_containers" SET title = name'
+        "   WHERE title IS NULL OR title = '';"
+        '   ALTER TABLE "MiniPLM"."work_containers" DROP COLUMN name;'
+        " END IF;"
+        " END $$"
     ),
 ]
 

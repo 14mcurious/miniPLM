@@ -74,7 +74,6 @@ const WorkAreaWorkspaceDetail = () => {
   const [formMode, setFormMode] = useState<
     null | { mode: "create" } | { mode: "update"; id: number }
   >(null);
-  const [name, setName] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [progress, setProgress] = useState("");
@@ -205,7 +204,6 @@ const WorkAreaWorkspaceDetail = () => {
 
   const openCreate = () => {
     setFormMode({ mode: "create" });
-    setName("");
     setTitle("");
     setDescription("");
     setProgress("");
@@ -217,7 +215,6 @@ const WorkAreaWorkspaceDetail = () => {
 
   const openUpdate = (container: WorkContainer) => {
     setFormMode({ mode: "update", id: container.id });
-    setName(container.name);
     setTitle(container.title ?? "");
     setDescription(container.description ?? "");
     setProgress(container.progress ?? "");
@@ -259,7 +256,7 @@ const WorkAreaWorkspaceDetail = () => {
       setEditForm({
         mode: "update",
         id: instanceDbId,
-        name: instance.name,
+        title: instance.title,
         workContainerId: String(instance.workContainerId),
         templateId: instance.templateId ? String(instance.templateId) : "",
         progress: instance.progress ?? "",
@@ -397,10 +394,6 @@ const WorkAreaWorkspaceDetail = () => {
                     onSubmit={async (e) => {
                       e.preventDefault();
                       if (busy) return;
-                      if (!name.trim()) {
-                        setFormError(t("wa.error.nameRequired"));
-                        return;
-                      }
                       setBusy(true);
                       setFormError(null);
                       try {
@@ -410,7 +403,7 @@ const WorkAreaWorkspaceDetail = () => {
                         } = buildFieldPayload(
                           {
                             mode: "update",
-                            name: "",
+                            title: "",
                             workContainerId: "",
                             templateId: containerTemplateId,
                             progress: "",
@@ -427,7 +420,6 @@ const WorkAreaWorkspaceDetail = () => {
                         const payload: Record<string, unknown> = {
                           projectId: Number(projectId),
                           workspaceId: Number(workspaceId),
-                          name: name.trim(),
                           title: title.trim(),
                           description: description.trim(),
                           progress: progress.trim() || null,
@@ -462,18 +454,6 @@ const WorkAreaWorkspaceDetail = () => {
                         : t("wa.editContainerTitle")}
                     </h3>
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <label htmlFor="container-name" className={labelClass}>
-                          {t("wa.name")}
-                        </label>
-                        <Input
-                          id="container-name"
-                          name="containerName"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                          disabled={busy}
-                        />
-                      </div>
                       <div>
                         <label htmlFor="container-title" className={labelClass}>
                           {t("wa.title")}

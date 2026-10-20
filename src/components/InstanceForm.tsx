@@ -87,8 +87,8 @@ const InstanceForm = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    if (!form.name.trim()) {
-      setFormError(t("wa.error.nameRequired"));
+    if (!form.title.trim()) {
+      setFormError(t("wa.error.titleRequired"));
       return;
     }
     if (!form.workContainerId) {
@@ -105,7 +105,7 @@ const InstanceForm = ({
     try {
       const payload: Record<string, unknown> = {
         operation: form.mode === "create" ? "create" : "update",
-        name: form.name.trim(),
+        title: form.title.trim(),
         progress: form.progress,
         assignees: form.assigneeIds,
         fields,
@@ -194,15 +194,15 @@ const InstanceForm = ({
       </h2>
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
-          <label htmlFor="instance-name" className={labelClass}>
-            {t("wa.name")}
+          <label htmlFor="instance-title" className={labelClass}>
+            {t("wa.title")}
           </label>
           <Input
-            id="instance-name"
-            name="instanceName"
-            value={form.name}
+            id="instance-title"
+            name="instanceTitle"
+            value={form.title}
             onChange={(e) =>
-              setForm({ ...form, name: e.target.value })
+              setForm({ ...form, title: e.target.value })
             }
             disabled={busy}
           />
@@ -224,7 +224,8 @@ const InstanceForm = ({
             <option value="">—</option>
             {containers.map((container) => (
               <option key={container.id} value={String(container.id)}>
-                {container.identifier} — {container.name}
+                {container.identifier}
+                {container.title ? ` — ${container.title}` : ""}
               </option>
             ))}
           </select>

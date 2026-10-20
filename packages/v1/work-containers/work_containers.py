@@ -1,7 +1,7 @@
 """MiniPLM work containers.
 
 A work container is an entity with a unique identifier (WC-000001 style),
-name, title, author, template fields, progress, description,
+title, author, template fields, progress, description,
 created/updated timestamps and a full history of the users who created or
 modified it (with dates and changed fields). Zero or more work instances
 can be linked to a work container.
@@ -22,7 +22,6 @@ import re
 import time
 import xml.etree.ElementTree as ElementTree
 
-NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
 ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom", "progress")
 DATE_RE = re.compile(
@@ -504,7 +503,6 @@ def container_row_to_dict(row):
         project_name,
         workspace_id,
         workspace_name,
-        name,
         title,
         description,
         progress,
@@ -525,7 +523,6 @@ def container_row_to_dict(row):
         "projectName": project_name,
         "workspaceId": workspace_id,
         "workspaceName": workspace_name,
-        "name": name,
         "title": title,
         "description": description,
         "progress": progress,
@@ -550,7 +547,7 @@ def container_row_to_dict(row):
 
 CONTAINER_SELECT = (
     "SELECT c.id, c.identifier, c.project_id, p.name, c.workspace_id, ws.name,"
-    " c.name, c.title, c.description, c.progress,"
+    " c.title, c.description, c.progress,"
     " c.template_id, t.name, c.fields,"
     " u.login_name, u.name, u.surname, c.created_at, c.updated_at,"
     " (SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
@@ -679,9 +676,6 @@ def do_create(ctx, session, data):
         project_id = int(raw_project)
     except (TypeError, ValueError):
         return fail("workContainers.error.projectNotFound")
-    name = str(data.get("name") or "").strip()
-    if not NAME_RE.match(name):
-        return fail("workContainers.error.nameFormat")
 
     workspace_id = None
     raw_workspace = data.get("workspaceId", data.get("workspace_id"))
@@ -739,13 +733,12 @@ def do_create(ctx, session, data):
                 return fail(error)
         cur.execute(
             'INSERT INTO "MiniPLM"."work_containers"'
-            " (identifier, project_id, workspace_id, name, title, description,"
+            " (identifier, project_id, workspace_id, title, description,"
             "  progress, author_id, template_id, fields)"
-            " VALUES ('WC-PENDING', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " VALUES ('WC-PENDING', %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 project_id,
                 workspace_id,
-                name,
                 str(data.get("title") or "").strip() or None,
                 str(data.get("description") or "").strip() or None,
                 progress_value,
@@ -772,7 +765,7 @@ def do_create(ctx, session, data):
                 container_id,
                 session.get("userId"),
                 json.dumps(
-                    ["name", "title", "description", "template", "fields", "progress"]
+                    ["title", "description", "template", "fields", "progress"]
                 ),
             ),
         )
@@ -795,7 +788,7 @@ def do_update(ctx, session, data):
 
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
-            'SELECT c.project_id, c.name, c.title, c.description, c.progress,'
+            'SELECT c.project_id, c.title, c.description, c.progress,'
             ' c.template_id, c.fields FROM "MiniPLM"."work_containers" c'
             ' WHERE c.id = %s',
             (container_id,),
@@ -804,7 +797,7 @@ def do_update(ctx, session, data):
         if not row:
             return fail("workContainers.error.notFound")
         (
-            project_id, current_name, current_title, current_description,
+            project_id, current_title, current_description,
             current_progress, current_template_id, current_fields,
         ) = row
         modes = accessible_project_modes(cur, session.get("userId"))
@@ -815,11 +808,6 @@ def do_update(ctx, session, data):
         current_fields = current_fields if isinstance(current_fields, list) else []
 
         changed = []
-        name = str(data.get("name") or "").strip() or current_name
-        if name != current_name:
-            if not NAME_RE.match(name):
-                return fail("workContainers.error.nameFormat")
-            changed.append("name")
         # An absent/empty title keeps the current value (update is partial).
         title = str(data.get("title") or "").strip() or current_title
         if title != current_title:
@@ -874,11 +862,11 @@ def do_update(ctx, session, data):
 
         cur.execute(
             'UPDATE "MiniPLM"."work_containers"'
-            " SET name = %s, title = %s, description = %s, progress = %s,"
+            " SET title = %s, description = %s, progress = %s,"
             "     fields = %s, updated_at = now()"
             " WHERE id = %s",
             (
-                name, title, description, progress_value,
+                title, description, progress_value,
                 json.dumps(merged), container_id,
             ),
         )

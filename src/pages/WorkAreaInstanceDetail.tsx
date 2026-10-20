@@ -208,7 +208,7 @@ const WorkAreaInstanceDetail = () => {
             <>
               <div className="mb-2 flex flex-wrap items-center gap-3">
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                  {instance.name}
+                  {instance.title}
                 </h1>
                 <span className="font-mono text-sm text-muted-foreground">
                   {instance.instanceId}
@@ -220,7 +220,7 @@ const WorkAreaInstanceDetail = () => {
                   to={`${base}/work-containers/${instance.workContainerId}`}
                   className="text-primary hover:underline"
                 >
-                  {instance.workContainerName}
+                  {instance.workContainerTitle}
                 </Link>
               </p>
 

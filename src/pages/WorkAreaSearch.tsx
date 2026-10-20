@@ -1,24 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { toast } from "sonner";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SearchGroup, SearchRow } from "@/lib/types";
+import { SearchRow } from "@/lib/types";
 
 const SEARCH_ENDPOINT = "/api/my/v1/search";
-
-const CATEGORY_KEYS: Record<string, string> = {
-  workcontainer: "wa.categoryContainer",
-  workinstance: "wa.categoryInstance",
-};
+const PAGE_SIZE = 100;
 
 const COLUMN_KEYS: Record<string, string> = {
   id: "wa.searchId",
-  name: "wa.name",
   title: "wa.title",
   parent: "wa.parentWorkspace",
   author: "wa.author",
@@ -45,10 +39,13 @@ function formatCell(key: string, value: unknown): string {
 
 /**
  * Full-text search over the elements of the current work area with a
- * Lucene/Solr-like query language. Results are presented as tables
- * grouped by category (work containers, work instances); the columns of
- * each table (default: id, title, progress, updated) are configured by
- * the administrator in the Configuration area.
+ * Lucene/Solr-like query language. Results are presented in a single
+ * unified table (work containers and work instances together; the
+ * WI-/WC- identifier distinguishes them), ordered by "updated" in
+ * descending order. By default the first 100 matches are shown; a
+ * "load more" button fetches the following pages when more matches
+ * exist. The columns (default: id, title, progress, updated) are
+ * configured by the administrator in the Configuration area.
  */
 const WorkAreaSearch = () => {
   const { t } = useI18n();
@@ -57,10 +54,12 @@ const WorkAreaSearch = () => {
   const navigate = useNavigate();
 
   const [query, setQuery] = useState("");
-  const [groups, setGroups] = useState<SearchGroup[]>([]);
-  const [columns, setColumns] = useState<Record<string, string[]>>({});
+  const [rows, setRows] = useState<SearchRow[]>([]);
+  const [columns, setColumns] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const translate = (err: unknown): string => {
@@ -70,33 +69,52 @@ const WorkAreaSearch = () => {
     return t("error.requestFailed", { status: "?" });
   };
 
+  const fetchPage = useCallback(
+    async (value: string, offset: number) => {
+      const data = await api<{
+        total: number;
+        hasMore: boolean;
+        columns: string[];
+        rows: SearchRow[];
+      }>(SEARCH_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({
+          operation: "search",
+          query: value,
+          projectId: Number(projectId),
+          offset,
+          limit: PAGE_SIZE,
+        }),
+      });
+      return {
+        total: data.total ?? 0,
+        hasMore: Boolean(data.hasMore),
+        columns: data.columns ?? [],
+        rows: data.rows ?? [],
+      };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projectId]
+  );
+
   const runSearch = useCallback(
     async (value: string) => {
       if (!projectId) return;
       setLoading(true);
       setError(null);
       try {
-        const data = await api<{
-          total: number;
-          groups: SearchGroup[];
-          columns: Record<string, string[]>;
-        }>(SEARCH_ENDPOINT, {
-          method: "POST",
-          body: JSON.stringify({
-            operation: "search",
-            query: value,
-            projectId: Number(projectId),
-          }),
-        });
-        setGroups(data.groups ?? []);
-        setColumns(data.columns ?? {});
-        setTotal(data.total ?? 0);
+        const data = await fetchPage(value, 0);
+        setRows(data.rows);
+        setColumns(data.columns);
+        setTotal(data.total);
+        setHasMore(data.hasMore);
       } catch (err) {
         const key = err instanceof ApiError ? err.serverKey : null;
         if (key === "search.error.invalidQuery") {
           setError(t(key, err.serverParams ?? undefined));
-          setGroups([]);
+          setRows([]);
           setTotal(0);
+          setHasMore(false);
         } else {
           setError(translate(err));
         }
@@ -105,8 +123,29 @@ const WorkAreaSearch = () => {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId]
+    [projectId, fetchPage]
   );
+
+  const loadMore = useCallback(async () => {
+    if (!projectId || loadingMore) return;
+    const offset = rows.length;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const data = await fetchPage(query, offset);
+      setRows((prev) => {
+        const seen = new Set(prev.map((row) => row.id));
+        return [...prev, ...data.rows.filter((row) => !seen.has(row.id))];
+      });
+      setTotal(data.total);
+      setHasMore(data.hasMore);
+    } catch (err) {
+      setError(translate(err));
+    } finally {
+      setLoadingMore(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, fetchPage, query, rows.length, loadingMore]);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -118,10 +157,10 @@ const WorkAreaSearch = () => {
 
   const base = `/work-area/${projectId}`;
 
-  const goToRow = (category: string, row: SearchRow) => {
-    if (category === "workcontainer") {
+  const goToRow = (row: SearchRow) => {
+    if (row.category === "workcontainer") {
       navigate(`${base}/work-containers/${row.dbId}`);
-    } else if (category === "workinstance") {
+    } else {
       navigate(`${base}/work-instances/${row.dbId}`);
     }
   };
@@ -176,94 +215,81 @@ const WorkAreaSearch = () => {
 
           {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
-          ) : total === 0 && !error ? (
+          ) : rows.length === 0 && !error ? (
             <p className="text-sm text-muted-foreground">{t("wa.searchEmpty")}</p>
           ) : (
-            <div className="space-y-8">
-              {groups.map((group) =>
-                group.count === 0 ? null : (
-                  <section key={group.category} aria-label={group.category}>
-                    <h2 className="mb-2 text-lg font-semibold text-foreground">
-                      {t(CATEGORY_KEYS[group.category] ?? "wa.search")}{" "}
-                      <span className="text-sm font-normal text-muted-foreground">
-                        ({group.count})
-                      </span>
-                    </h2>
-                    <div className="overflow-x-auto rounded-lg border">
-                      <table className="w-full border-collapse text-sm">
-                        <thead>
-                          <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            {(columns[group.category] ?? []).map((key) => (
-                              <th key={key} className="px-3 py-2">
-                                {t(COLUMN_KEYS[key] ?? key)}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {group.rows.map((row) => (
-                            <tr
-                              key={row.id}
-                              className="border-b last:border-0 hover:bg-muted/30"
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {total} {t("wa.resultsFound")}
+              </p>
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                      {columns.map((key) => (
+                        <th key={key} className="px-3 py-2">
+                          {t(COLUMN_KEYS[key] ?? key)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr
+                        key={row.id}
+                        className="border-b last:border-0 hover:bg-muted/30"
+                      >
+                        {columns.map((key) => {
+                          if (key === "id") {
+                            return (
+                              <td key={key} className="px-3 py-2">
+                                <button
+                                  type="button"
+                                  className="text-left font-medium text-foreground hover:underline"
+                                  title={row.title}
+                                  onClick={() => goToRow(row)}
+                                >
+                                  {row.id}
+                                </button>
+                              </td>
+                            );
+                          }
+                          if (key === "title") {
+                            return (
+                              <td
+                                key={key}
+                                className="px-3 py-2 text-muted-foreground"
+                              >
+                                {row.title || "—"}
+                              </td>
+                            );
+                          }
+                          return (
+                            <td
+                              key={key}
+                              className="px-3 py-2 text-muted-foreground"
                             >
-                              {(columns[group.category] ?? []).map((key) => {
-                                if (key === "id") {
-                                  return (
-                                    <td key={key} className="px-3 py-2">
-                                      <button
-                                        type="button"
-                                        className="text-left font-medium text-foreground hover:underline"
-                                        title={row.name}
-                                        onClick={() =>
-                                          goToRow(group.category, row)
-                                        }
-                                      >
-                                        {row.id}
-                                      </button>
-                                    </td>
-                                  );
-                                }
-                                if (key === "name") {
-                                  return (
-                                    <td key={key} className="px-3 py-2">
-                                      <button
-                                        type="button"
-                                        className="text-left font-medium text-foreground hover:underline"
-                                        onClick={() =>
-                                          goToRow(group.category, row)
-                                        }
-                                      >
-                                        {row.name}
-                                      </button>
-                                    </td>
-                                  );
-                                }
-                                if (key === "title") {
-                                  return (
-                                    <td
-                                      key={key}
-                                      className="px-3 py-2 text-muted-foreground"
-                                    >
-                                      {row.title || "—"}
-                                    </td>
-                                  );
-                                }
-                                return (
-                                  <td
-                                    key={key}
-                                    className="px-3 py-2 text-muted-foreground"
-                                  >
-                                    {formatCell(key, row.cells[key])}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                )
+                              {formatCell(key, row.cells[key])}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {hasMore && (
+                <div className="flex justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={loadingMore}
+                    aria-busy={loadingMore}
+                    onClick={() => void loadMore()}
+                  >
+                    {t("wa.loadMore")}
+                  </Button>
+                </div>
               )}
             </div>
           )}

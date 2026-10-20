@@ -13,7 +13,6 @@ const CATEGORY_KEYS: Record<string, string> = {
 
 const COLUMN_KEYS: Record<string, string> = {
   id: "wa.searchId",
-  name: "wa.name",
   title: "wa.title",
   parent: "wa.parentWorkspace",
   author: "wa.author",

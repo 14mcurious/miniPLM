@@ -50,7 +50,7 @@ const WorkAreaContainersTable = ({
 
   const handleDelete = async (container: WorkContainer) => {
     if (
-      !window.confirm(t("wa.deleteContainerConfirm", { name: container.name }))
+      !window.confirm(t("wa.deleteContainerConfirm", { name: container.title ?? container.identifier }))
     ) {
       return;
     }
@@ -71,7 +71,7 @@ const WorkAreaContainersTable = ({
       <thead>
         <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
           <th className="px-2 py-2">{t("wa.identifier")}</th>
-          <th className="px-2 py-2">{t("wa.name")}</th>
+          <th className="px-2 py-2">{t("wa.title")}</th>
           <th className="px-2 py-2">{t("wa.progress")}</th>
           <th className="px-2 py-2">{t("wa.author")}</th>
           <th className="px-2 py-2">{t("wa.instances")}</th>
@@ -90,13 +90,8 @@ const WorkAreaContainersTable = ({
                 to={`${base}/work-containers/${container.id}`}
                 className="hover:underline"
               >
-                {container.name}
+                {container.title || container.identifier}
               </Link>
-              {container.title && (
-                <span className="ml-2 text-muted-foreground">
-                  — {container.title}
-                </span>
-              )}
             </td>
             <td className="px-2 py-2 text-muted-foreground">
               <span

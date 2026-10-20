@@ -153,17 +153,12 @@ const WorkAreaContainerDetail = () => {
             <>
               <div className="mb-2 flex flex-wrap items-center gap-3">
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                  {container.name}
+                  {container.title || container.identifier}
                 </h1>
                 <span className="font-mono text-sm text-muted-foreground">
                   {container.identifier}
                 </span>
               </div>
-              {container.title && (
-                <p className="mb-6 text-lg text-muted-foreground">
-                  {container.title}
-                </p>
-              )}
 
               <div className="mb-8 rounded-lg border bg-card p-5 shadow-sm">
                 <dl className="grid gap-4 sm:grid-cols-2">
@@ -308,7 +303,7 @@ const WorkAreaContainerDetail = () => {
                   <thead>
                     <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-2">{t("wa.instanceId")}</th>
-                      <th className="px-2 py-2">{t("wa.name")}</th>
+                      <th className="px-2 py-2">{t("wa.title")}</th>
                       <th className="px-2 py-2">{t("wa.progress")}</th>
                       <th className="px-2 py-2">{t("wa.updated")}</th>
                     </tr>
@@ -324,7 +319,7 @@ const WorkAreaContainerDetail = () => {
                             to={`/work-area/${projectId}/work-instances/${instance.id}`}
                             className="hover:underline"
                           >
-                            {instance.name}
+                            {instance.title}
                           </Link>
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">

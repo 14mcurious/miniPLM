@@ -1,14 +1,18 @@
 """MiniPLM work area search.
 
 Searches the elements of the accessible work areas (projects) with a
-Lucene/Solr-like query language. Results are grouped by category (work
-container, work instance) and presented as tables; the columns of each
-table are configured by the administrator in the Configuration area
-(setting search_columns). The default columns are: id, title, progress,
-updated. Work spaces are not part of the search.
+Lucene/Solr-like query language. Results are presented as a single
+unified table (work containers and work instances together; the WI-/WC-
+identifier already tells them apart); the columns of the table (default:
+id, title, progress, updated) are configured by the administrator in the
+Configuration area. Results are ordered by the "updated" field in
+descending order (most recent first) and are paginated: by default the
+first 100 matches are returned and the client can request further pages
+with offset/limit until the reachable cap is exhausted.
+Work spaces are not part of the search.
 
 Supported query syntax (subset of Lucene):
-  word                 full-text match over name/title/description/etc.
+  word                 full-text match over title/description/etc.
   "quoted phrase"      exact phrase match
   field:value          restrict the match to one field
   field:"quoted value" exact phrase on one field
@@ -17,8 +21,8 @@ Supported query syntax (subset of Lucene):
   ( ... )              grouping; adjacent terms imply AND
 
 Queryable fields:
-  container:   name, title, description, progress, author, category
-  instance:    name, progress, assignees, template, author, category
+  container:   title, description, progress, author, category
+  instance:    title, progress, assignees, template, author, category
                plus every template field name (e.g. weight:10, status:done)
 """
 
@@ -28,7 +32,6 @@ import time
 
 QUERYABLE = {
     "workcontainer": (
-        "name",
         "title",
         "description",
         "progress",
@@ -36,7 +39,7 @@ QUERYABLE = {
         "category",
     ),
     "workinstance": (
-        "name",
+        "title",
         "progress",
         "assignees",
         "template",
@@ -45,12 +48,11 @@ QUERYABLE = {
     ),
 }
 # Columns an administrator may enable in the results tables, per
-# category. id, name and title are full columns like the others; the
-# default set is id, title, progress, updated.
+# category. id, title and the other listed fields are full columns;
+# the default set is id, title, progress, updated.
 ALLOWED_COLUMNS = {
     "workcontainer": (
         "id",
-        "name",
         "title",
         "description",
         "progress",
@@ -59,7 +61,6 @@ ALLOWED_COLUMNS = {
     ),
     "workinstance": (
         "id",
-        "name",
         "title",
         "progress",
         "assignees",
@@ -72,7 +73,12 @@ DEFAULT_COLUMNS = {
     "workcontainer": ["id", "title", "progress", "updated"],
     "workinstance": ["id", "title", "progress", "updated"],
 }
-MAX_RESULTS_PER_CATEGORY = 200
+# Pagination of the unified results table: by default the first 100
+# matches are returned and the client can request further pages with
+# offset/limit. More than MAX_SEARCH_ROWS matches are not retrievable.
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 500
+MAX_SEARCH_ROWS = 5000
 
 
 class QueryError(Exception):
@@ -396,14 +402,14 @@ def build_documents(cur, project_ids):
     docs = []
 
     cur.execute(
-        'SELECT c.id, c.identifier, c.name, c.title, c.description, c.progress,'
+        'SELECT c.id, c.identifier, c.title, c.description, c.progress,'
         ' c.author_id, c.updated_at'
         ' FROM "MiniPLM"."work_containers" c'
         f' WHERE c.project_id IN ({placeholders})',
         tuple(project_ids),
     )
     for (
-        container_id, identifier, name, title, description,
+        container_id, identifier, title, description,
         progress, author_id, updated_at,
     ) in cur.fetchall():
         docs.append(
@@ -411,7 +417,7 @@ def build_documents(cur, project_ids):
                 "category": "workcontainer",
                 "id": identifier,
                 "dbId": str(container_id),
-                "name": name or "",
+                "name": title or "",
                 "title": title or "",
                 "description": description or "",
                 "progress": progress or "",
@@ -421,7 +427,7 @@ def build_documents(cur, project_ids):
         )
 
     cur.execute(
-        'SELECT i.id, i.instance_id, i.name, i.progress, i.assignees,'
+        'SELECT i.id, i.instance_id, i.title, i.progress, i.assignees,'
         ' i.author_id, i.updated_at, t.name, i.fields'
         ' FROM "MiniPLM"."work_instances" i'
         ' LEFT JOIN "MiniPLM"."work_instance_templates" t ON t.id = i.template_id'
@@ -429,7 +435,7 @@ def build_documents(cur, project_ids):
         tuple(project_ids),
     )
     for (
-        instance_db_id, instance_id, name, progress, assignees,
+        instance_db_id, instance_id, title, progress, assignees,
         author_id, updated_at, template_name, fields,
     ) in cur.fetchall():
         assignee_ids = assignees if isinstance(assignees, list) else []
@@ -447,7 +453,8 @@ def build_documents(cur, project_ids):
             "category": "workinstance",
             "id": instance_id,
             "dbId": str(instance_db_id),
-            "name": name or "",
+            "name": title or "",
+            "title": title or "",
             "progress": progress or "",
             "assignees": assignee_names,
             "template": template_name or "",
@@ -492,6 +499,18 @@ def load_columns(cur):
     return columns
 
 
+def merged_columns(columns):
+    """Unify the per-category column configuration into a single column
+    list for the merged results table: container column order is kept,
+    instance-only columns are appended at the end."""
+    merged = []
+    for category in ("workcontainer", "workinstance"):
+        for key in columns.get(category, []):
+            if key not in merged:
+                merged.append(key)
+    return merged
+
+
 def do_search(ctx, session, data):
     query = str(data.get("query") or "").strip()
     raw_project = data.get("projectId", data.get("project_id"))
@@ -503,6 +522,18 @@ def do_search(ctx, session, data):
             return fail("search.error.invalidQuery")
 
     try:
+        offset = int(data.get("offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+    if offset < 0:
+        offset = 0
+    try:
+        limit = int(data.get("limit", DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        limit = DEFAULT_PAGE_SIZE
+    limit = max(1, min(limit, MAX_PAGE_SIZE))
+
+    try:
         tree = parse_query(query)
     except QueryError as exc:
         return fail("search.error.invalidQuery", detail=str(exc))
@@ -510,44 +541,50 @@ def do_search(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         project_ids = accessible_project_ids(cur, session.get("userId"))
         if not project_ids:
-            return {"ok": True, "total": 0, "groups": [], "columns": load_columns(cur)}
+            return {
+                "ok": True,
+                "query": query,
+                "total": 0,
+                "hasMore": False,
+                "columns": merged_columns(load_columns(cur)),
+                "rows": [],
+            }
         if project_scope is not None:
             if project_scope not in project_ids:
                 return fail("forbidden")
             project_ids = [project_scope]
         documents = build_documents(cur, project_ids)
-        columns = load_columns(cur)
+        columns = merged_columns(load_columns(cur))
 
+    # Default ordering: "updated" descending (most recent first). The
+    # unified table mixes work containers and work instances; the
+    # WI-/WC- identifier in the "id" column already distinguishes them.
     matched = [doc for doc in documents if eval_node(tree, doc)]
-    groups = []
-    for category in ("workcontainer", "workinstance"):
-        rows = [doc for doc in matched if doc["category"] == category]
-        rows.sort(key=lambda doc: (doc["name"].lower(), doc["id"]))
-        groups.append(
-            {
-                "category": category,
-                "count": len(rows),
-                "rows": [
-                    {
-                        "id": doc["id"],
-                        "dbId": doc.get("dbId", doc["id"]),
-                        "name": doc["name"],
-                        "title": doc.get("title", ""),
-                        "cells": {
-                            key: doc.get(key, "")
-                            for key in columns[category]
-                        },
-                    }
-                    for doc in rows[:MAX_RESULTS_PER_CATEGORY]
-                ],
-            }
-        )
+    matched.sort(
+        key=lambda doc: (str(doc.get("updated") or ""), str(doc.get("id") or "")),
+        reverse=True,
+    )
+    total = len(matched)
+    reachable = min(total, MAX_SEARCH_ROWS)
+    page = matched[offset : offset + limit]
+    rows = [
+        {
+            "id": doc["id"],
+            "dbId": doc.get("dbId", doc["id"]),
+            "category": doc["category"],
+            "name": doc["name"],
+            "title": doc.get("title", ""),
+            "cells": {key: doc.get(key, "") for key in columns},
+        }
+        for doc in page
+    ]
     return {
         "ok": True,
         "query": query,
-        "total": len(matched),
+        "total": total,
+        "hasMore": offset + len(page) < reachable,
         "columns": columns,
-        "groups": groups,
+        "rows": rows,
     }
 
 

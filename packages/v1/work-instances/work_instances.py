@@ -23,7 +23,6 @@ import re
 import time
 import xml.etree.ElementTree as ElementTree
 
-NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
 ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom")
 DATE_RE = re.compile(
@@ -496,8 +495,8 @@ def validate_fields(cur, fields):
 
 
 INSTANCE_SELECT = (
-    "SELECT i.id, i.instance_id, i.name, i.project_id, p.name,"
-    " i.work_container_id, c.identifier, c.name,"
+    "SELECT i.id, i.instance_id, i.title, i.project_id, p.name,"
+    " i.work_container_id, c.identifier, c.title,"
     " i.template_id, t.name, i.progress, i.assignees, i.fields,"
     " u.login_name, u.name, u.surname, i.created_at, i.updated_at"
     ' FROM "MiniPLM"."work_instances" i'
@@ -568,8 +567,8 @@ def order_fields_by_template(fields, template):
 
 def instance_row_to_dict(row):
     (
-        instance_db_id, instance_id, name, project_id, project_name,
-        container_id, container_identifier, container_name,
+        instance_db_id, instance_id, title, project_id, project_name,
+        container_id, container_identifier, container_title,
         template_id, template_name, progress, assignees, fields,
         author_login, author_name, author_surname, created_at, updated_at,
     ) = row
@@ -577,12 +576,12 @@ def instance_row_to_dict(row):
     return {
         "id": instance_db_id,
         "instanceId": instance_id,
-        "name": name,
+        "title": title,
         "projectId": project_id,
         "projectName": project_name,
         "workContainerId": container_id,
         "workContainerIdentifier": container_identifier,
-        "workContainerName": container_name,
+        "workContainerTitle": container_title,
         "templateId": template_id,
         "templateName": template_name,
         "progress": progress,
@@ -657,9 +656,9 @@ def do_create(ctx, session, data):
         container_id = int(raw_container)
     except (TypeError, ValueError):
         return fail("workInstances.error.containerNotFound")
-    name = str(data.get("name") or "").strip()
-    if not NAME_RE.match(name):
-        return fail("workInstances.error.nameFormat")
+    title = str(data.get("title") or "").strip()
+    if not title:
+        return fail("workInstances.error.titleRequired")
 
     template = None
     raw_template = data.get("templateId", data.get("template_id"))
@@ -731,13 +730,13 @@ def do_create(ctx, session, data):
 
         cur.execute(
             'INSERT INTO "MiniPLM"."work_instances"'
-            " (instance_id, project_id, work_container_id, name, author_id,"
+            " (instance_id, project_id, work_container_id, title, author_id,"
             "  progress, assignees, template_id, fields)"
             " VALUES ('WI-PENDING', %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 project_id,
                 container_id,
-                name,
+                title,
                 session.get("userId"),
                 progress_value,
                 json.dumps([int(x) for x in assignee_ids]),
@@ -822,12 +821,12 @@ def do_update(ctx, session, data):
         if instance_db_id is None:
             return fail("workInstances.error.notFound")
         cur.execute(
-            'SELECT i.project_id, i.name, i.progress, i.assignees, i.fields,'
+            'SELECT i.project_id, i.title, i.progress, i.assignees, i.fields,'
             ' i.template_id FROM "MiniPLM"."work_instances" i WHERE i.id = %s',
             (instance_db_id,),
         )
         row = cur.fetchone()
-        project_id, current_name, current_progress, current_assignees, current_fields, template_id = row
+        project_id, current_title, current_progress, current_assignees, current_fields, template_id = row
         modes = accessible_project_modes(cur, session.get("userId"))
         if project_id not in modes or "U" not in modes.get(project_id, set()):
             return fail("forbidden")
@@ -835,9 +834,9 @@ def do_update(ctx, session, data):
         template = fetch_template(cur, template_id) if template_id else None
         current_fields = current_fields if isinstance(current_fields, list) else []
 
-        new_name = str(data.get("name") or "").strip() or current_name
-        if not NAME_RE.match(new_name):
-            return fail("workInstances.error.nameFormat")
+        # An absent/empty title keeps the current value (partial update);
+        # the value is a free-form string with no character constraints.
+        new_title = str(data.get("title") or "").strip() or current_title
 
         if "fields" in data:
             fields, error = normalize_fields(data["fields"], template)
@@ -900,11 +899,11 @@ def do_update(ctx, session, data):
 
         cur.execute(
             'UPDATE "MiniPLM"."work_instances"'
-            " SET name = %s, progress = %s, assignees = %s, fields = %s,"
+            " SET title = %s, progress = %s, assignees = %s, fields = %s,"
             "     updated_at = now()"
             " WHERE id = %s",
             (
-                new_name,
+                new_title,
                 progress_value,
                 json.dumps(assignees),
                 json.dumps(merged),

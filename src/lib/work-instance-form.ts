@@ -27,7 +27,7 @@ export const AD_HOC_TYPES = [
 export interface FormState {
   mode: "create" | "update";
   id?: number;
-  name: string;
+  title: string;
   workContainerId: string;
   templateId: string;
   progress: string;
@@ -40,7 +40,7 @@ export interface FormState {
 
 export const emptyForm = (): FormState => ({
   mode: "create",
-  name: "",
+  title: "",
   workContainerId: "",
   templateId: "",
   progress: "",

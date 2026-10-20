@@ -4,7 +4,7 @@ import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import { Button } from "@/components/ui/button";
-import { ProgressWorkflow, UserRef, WorkContainer } from "@/lib/types";
+import { UserRef, WorkContainer } from "@/lib/types";
 
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
 
@@ -18,7 +18,6 @@ interface WorkAreaContainersTableProps {
   /** Work area base path, e.g. /work-area/<projectId>. */
   base: string;
   containers: WorkContainer[];
-  progressWorkflow: ProgressWorkflow | null;
   canEdit: boolean;
   canDelete: boolean;
   onEdit: (container: WorkContainer) => void;
@@ -29,12 +28,12 @@ interface WorkAreaContainersTableProps {
  * Work containers table of a work space. Read-only rows (identifier, name,
  * progress, author, instance count, updated at) plus the per-row edit and
  * delete actions, each shown only when the project modes allow them.
- * Progress cells carry the workflow state description as a hover tooltip.
+ * Progress cells carry the workflow state label of the container's own
+ * template progress workflow as a hover tooltip.
  */
 const WorkAreaContainersTable = ({
   base,
   containers,
-  progressWorkflow,
   canEdit,
   canDelete,
   onEdit,
@@ -101,7 +100,10 @@ const WorkAreaContainersTable = ({
             </td>
             <td className="px-2 py-2 text-muted-foreground">
               <span
-                title={progressLabel(progressWorkflow, container.progress)}
+                title={progressLabel(
+                  container.progressWorkflow,
+                  container.progress
+                )}
               >
                 {container.progress ?? "—"}
               </span>

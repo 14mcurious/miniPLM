@@ -1,11 +1,16 @@
 """MiniPLM work containers.
 
 A work container is an entity with a unique identifier (WC-000001 style),
-name, title, author, progress (validated against the workflow progress
-custom type configured in the Configuration page when one is designated),
-description, created/updated timestamps and a full history of the users who
-created or modified it (with dates and changed fields). Zero or more work
-instances can be linked to a work container.
+name, title, author, template fields, progress, description,
+created/updated timestamps and a full history of the users who created or
+modified it (with dates and changed fields). Zero or more work instances
+can be linked to a work container.
+
+Containers follow work instance templates (the same shared library):
+the template lists the allowed fields, and a "progress" field of the
+template selects the workflow progress type that drives the container
+progress (initial state on create, role-filtered transitions on update).
+Without a progress field there is no progress.
 
 Access: valid Redis session + an enabled group attached to the project.
 Group access modes gate the operations: read (any mode), create ``C``,
@@ -15,8 +20,14 @@ update ``U``, delete ``D``.
 import json
 import re
 import time
+import xml.etree.ElementTree as ElementTree
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
+FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
+ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom", "progress")
+DATE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$"
+)
 
 
 def redis_key(ctx, name):
@@ -123,24 +134,21 @@ def accessible_project_modes(cur, user_id):
     return modes
 
 
-def progress_workflow(cur):
-    """Full descriptor of the designated workflow progress type.
+def workflow_type_descriptor(cur, type_name):
+    """Full descriptor of a workflow progress type by name, or None.
 
-    Returns {options, transitions, initialState} when a workflow progress
-    type is designated, or None (progress is free text).
+    Returns {options, transitions, initialState} for an enabled
+    workflow-category custom type; disabled or missing types resolve to
+    None so that a template progress field degrades gracefully.
     """
-    cur.execute(
-        'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
-        ("workflow_progress_type",),
-    )
-    row = cur.fetchone()
-    type_name = (row[0] if row else "").strip()
-    if not type_name:
+    name = str(type_name or "").strip()
+    if not name:
         return None
     cur.execute(
         'SELECT options, initial_state, transitions FROM "MiniPLM"."custom_types"'
-        " WHERE lower(name) = lower(%s) AND is_disabled = FALSE",
-        (type_name,),
+        " WHERE lower(name) = lower(%s) AND category = 'workflow'"
+        " AND is_disabled = FALSE",
+        (name,),
     )
     row = cur.fetchone()
     if not row:
@@ -182,12 +190,30 @@ def progress_workflow(cur):
     }
 
 
-def progress_options(cur):
-    """Options of the designated workflow progress type, or None (free text)."""
-    workflow = progress_workflow(cur)
+def template_progress_workflow(cur, template):
+    """Progress workflow of the template's progress field, or None.
+
+    The template definition may carry at most one field of type
+    "progress"; its customType references the workflow progress type.
+    The workflow applies automatically: there is no global designation.
+    Without a progress field the container has no progress at all.
+    """
+    if not isinstance(template, dict):
+        return None
+    for entry in template.get("definition") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("type") or "").strip().lower() == "progress":
+            return workflow_type_descriptor(cur, entry.get("customType"))
+    return None
+
+
+def template_progress_options(cur, template):
+    """Options of the template progress workflow, or None (no progress)."""
+    workflow = template_progress_workflow(cur, template)
     if workflow is None:
         return None
-    return [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
+    return [o for o in workflow["options"]]
 
 
 def validate_progress(progress_value, options):
@@ -213,21 +239,25 @@ def user_role_names(cur, user_id):
     return [str(row[0]) for row in cur.fetchall()]
 
 
-def validate_progress_change(cur, session, current_progress, new_value, on_create=False):
+def validate_progress_change(
+    cur, session, current_progress, new_value, on_create=False, workflow=None
+):
     """Apply the workflow transition rules to a progress value.
 
-    On create: when the workflow defines transitions, a new object must
-    start from its initial state (or leave the progress empty). On
-    update: the new state must be reachable from the current state by a
-    transition, and the user must hold the role the transition requires
-    (a null role means any user).
+    The workflow is the descriptor of the progress type referenced by the
+    container's template (there is no global designation). On create:
+    when the workflow defines transitions, a new object must start from
+    its initial state (or leave the progress empty). On update: the new
+    state must be reachable from the current state by a transition, and
+    the user must hold the role the transition requires (a null role
+    means any user). A null workflow means the container has no progress
+    field: a non-empty value is rejected by the caller.
     """
     value = str(new_value or "").strip()
     if not value:
         return None
-    workflow = progress_workflow(cur)
     if workflow is None:
-        return None
+        return fail("workContainers.error.progressNotInTemplate")
     transitions = workflow["transitions"]
     if on_create:
         if not transitions:
@@ -270,6 +300,202 @@ def validate_progress_change(cur, session, current_progress, new_value, on_creat
     return None
 
 
+def fetch_template(cur, template_id):
+    cur.execute(
+        'SELECT id, project_id, name, definition, created_at, updated_at'
+        ' FROM "MiniPLM"."work_instance_templates" WHERE id = %s',
+        (template_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    definition = row[3] if isinstance(row[3], list) else []
+    return {
+        "id": row[0],
+        "projectId": row[1],
+        "name": row[2],
+        "definition": definition,
+        "createdAt": row[4].isoformat() if row[4] else None,
+        "updatedAt": row[5].isoformat() if row[5] else None,
+    }
+
+
+def fetch_custom_type(cur, name):
+    if not name:
+        return None
+    cur.execute(
+        'SELECT name, value_type, multi_select, options, is_disabled'
+        ' FROM "MiniPLM"."custom_types" WHERE lower(name) = lower(%s)',
+        (str(name),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    options = row[3] if isinstance(row[3], list) else []
+    return {
+        "name": row[0],
+        "valueType": row[1],
+        "multiSelect": bool(row[2]),
+        "options": options,
+        "isDisabled": bool(row[4]),
+    }
+
+
+def option_values(custom_type):
+    values = []
+    for item in custom_type.get("options", []):
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def validate_field_value(field_type, value, custom_type):
+    """Validate one field value; return None or a shared error key.
+
+    Mirrors the work instance field validation: containers carry the same
+    template fields, so the same (shared) error keys apply.
+    """
+    if value is None:
+        return None
+    if field_type == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "workInstances.error.fieldType"
+        return None
+    if field_type == "date":
+        if not isinstance(value, str) or not DATE_RE.match(value.strip()):
+            return "workInstances.error.fieldType"
+        return None
+    if field_type in ("string", "html"):
+        if not isinstance(value, str):
+            return "workInstances.error.fieldType"
+        return None
+    if field_type == "xml":
+        if not isinstance(value, str) or not value.strip():
+            return "workInstances.error.fieldType"
+        try:
+            ElementTree.fromstring(value)
+        except ElementTree.ParseError:
+            return "workInstances.error.xmlInvalid"
+        return None
+    if field_type == "attachment":
+        if not isinstance(value, dict):
+            return "workInstances.error.fieldType"
+        if not str(value.get("s3Key") or "").strip() or not str(
+            value.get("fileName") or ""
+        ).strip():
+            return "workInstances.error.attachment"
+        return None
+    if field_type == "custom":
+        if custom_type is None or custom_type.get("isDisabled"):
+            return "workInstances.error.customTypeNotFound"
+        allowed = option_values(custom_type)
+        if custom_type.get("multiSelect"):
+            if isinstance(value, str):
+                value = [value]
+            if not isinstance(value, list) or not value:
+                return "workInstances.error.fieldType"
+            for item in value:
+                if str(item) not in allowed:
+                    return "workInstances.error.customValue"
+            return None
+        if isinstance(value, list):
+            if len(value) != 1:
+                return "workInstances.error.fieldType"
+            value = value[0]
+        if str(value) not in allowed:
+            return "workInstances.error.customValue"
+        return None
+    return "workInstances.error.fieldType"
+
+
+def normalize_fields(raw_fields, template):
+    """Build the canonical field list for a container (template fields
+    or ad-hoc typed fields); the progress field is excluded: it lives in
+    its own column, driven by the template's workflow progress type.
+    Returns (fields, error).
+    """
+    provided = {}
+    if raw_fields:
+        if not isinstance(raw_fields, list):
+            return None, fail("workInstances.error.fields")
+        for item in raw_fields:
+            if not isinstance(item, dict):
+                return None, fail("workInstances.error.fields")
+            field_name = str(item.get("name") or "").strip()
+            if not FIELD_NAME_RE.match(field_name):
+                return None, fail("workInstances.error.fieldName")
+            provided[field_name.lower()] = (field_name, item)
+
+    fields = []
+    if template is not None:
+        for definition in template.get("definition", []):
+            if not isinstance(definition, dict):
+                continue
+            if str(definition.get("type") or "").strip() == "progress":
+                continue
+            field_name = str(definition.get("name") or "").strip()
+            field_type = str(definition.get("type") or "string").strip()
+            if field_type not in ALLOWED_TYPES:
+                field_type = "string"
+            custom_type_name = definition.get("customType")
+            given = provided.get(field_name.lower())
+            value = given[1].get("value") if given else None
+            fields.append(
+                {
+                    "name": field_name,
+                    "type": field_type,
+                    "value": value,
+                    "customType": custom_type_name,
+                    "description": str(definition.get("description") or ""),
+                }
+            )
+        for key in provided:
+            if key not in [f["name"].lower() for f in fields]:
+                return None, fail(
+                    "workInstances.error.fieldUnknown", field=provided[key][0]
+                )
+        return fields, None
+
+    for key, (field_name, item) in provided.items():
+        field_type = str(item.get("type") or "").strip()
+        if field_type not in ALLOWED_TYPES:
+            return None, fail(
+                "workInstances.error.fieldType", field=field_name
+            )
+        value = item.get("value")
+        if value is None and "value" not in item:
+            continue
+        fields.append(
+            {
+                "name": field_name,
+                "type": field_type,
+                "value": value,
+                "customType": item.get("customType"),
+                "description": str(item.get("description") or ""),
+            }
+        )
+    return fields, None
+
+
+def validate_fields(cur, fields):
+    """Validate values against the declared types; return error or None."""
+    for field in fields:
+        field_type = field["type"]
+        custom_type = None
+        if field_type == "custom":
+            custom_type = fetch_custom_type(cur, field.get("customType"))
+            if custom_type is None:
+                return fail("workInstances.error.customTypeNotFound",
+                            field=field["name"])
+        error = validate_field_value(field_type, field.get("value"), custom_type)
+        if error:
+            return fail(error, field=field["name"])
+    return None
+
+
 def container_row_to_dict(row):
     (
         container_id,
@@ -282,6 +508,9 @@ def container_row_to_dict(row):
         title,
         description,
         progress,
+        template_id,
+        template_name,
+        fields,
         author_login,
         author_name,
         author_surname,
@@ -300,6 +529,10 @@ def container_row_to_dict(row):
         "title": title,
         "description": description,
         "progress": progress,
+        "progressWorkflow": None,
+        "templateId": template_id,
+        "templateName": template_name,
+        "fields": fields if isinstance(fields, list) else [],
         "author": (
             {
                 "loginName": author_login,
@@ -318,14 +551,49 @@ def container_row_to_dict(row):
 CONTAINER_SELECT = (
     "SELECT c.id, c.identifier, c.project_id, p.name, c.workspace_id, ws.name,"
     " c.name, c.title, c.description, c.progress,"
+    " c.template_id, t.name, c.fields,"
     " u.login_name, u.name, u.surname, c.created_at, c.updated_at,"
     " (SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
     "  WHERE wi.work_container_id = c.id) AS instance_count"
     ' FROM "MiniPLM"."work_containers" c'
     ' JOIN "MiniPLM"."projects" p ON p.id = c.project_id'
     ' LEFT JOIN "MiniPLM"."workspaces" ws ON ws.id = c.workspace_id'
+    ' LEFT JOIN "MiniPLM"."work_instance_templates" t ON t.id = c.template_id'
     ' LEFT JOIN "MiniPLM"."users" u ON u.id = c.author_id'
 )
+
+
+def attach_progress_workflows(cur, containers):
+    """Attach the per-container progress workflow (resolved from the
+    container's template) so the UI can offer only the states reachable
+    from the current state for the user's roles."""
+    template_cache = {}
+    for container in containers:
+        template_id = container.get("templateId")
+        if template_id is None:
+            container["progressWorkflow"] = None
+            continue
+        if template_id not in template_cache:
+            template_cache[template_id] = fetch_template(cur, template_id)
+        container["progressWorkflow"] = template_progress_workflow(
+            cur, template_cache[template_id]
+        )
+
+
+def attach_container_progress_workflow(cur, container):
+    """Single-row counterpart of attach_progress_workflows: resolve the
+    progress workflow of the container's template, when present."""
+    template_id = container.get("templateId")
+    if template_id is None:
+        container["progressWorkflow"] = None
+        return
+    template = fetch_template(cur, template_id)
+    if template is None:
+        container["progressWorkflow"] = None
+        return
+    container["progressWorkflow"] = template_progress_workflow(
+        cur, template
+    )
 
 
 def do_list(ctx, session, data):
@@ -337,8 +605,6 @@ def do_list(ctx, session, data):
             return {
                 "ok": True,
                 "workContainers": [],
-                "progressOptions": None,
-                "progressWorkflow": None,
                 "userRoles": [],
             }
         project_ids = list(modes.keys())
@@ -366,18 +632,12 @@ def do_list(ctx, session, data):
         sql += " ORDER BY c.id"
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
-        workflow = progress_workflow(cur)
         user_roles = user_role_names(cur, session.get("userId"))
-    options = (
-        [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
-        if workflow is not None
-        else None
-    )
+        containers = [container_row_to_dict(r) for r in rows]
+        attach_progress_workflows(cur, containers)
     return {
         "ok": True,
-        "workContainers": [container_row_to_dict(r) for r in rows],
-        "progressOptions": options,
-        "progressWorkflow": workflow,
+        "workContainers": containers,
         "userRoles": user_roles,
     }
 
@@ -403,6 +663,13 @@ def do_create(ctx, session, data):
         return fail("workContainers.error.workspaceNotFound")
 
     progress_value = str(data.get("progress") or "").strip() or None
+    raw_template = data.get("templateId", data.get("template_id"))
+    template_id = None
+    if raw_template not in (None, ""):
+        try:
+            template_id = int(raw_template)
+        except (TypeError, ValueError):
+            return fail("workContainers.error.templateNotFound")
 
     with ctx.POSTGRESQL.cursor() as cur:
         modes = accessible_project_modes(cur, session.get("userId"))
@@ -415,20 +682,35 @@ def do_create(ctx, session, data):
             )
             if not cur.fetchone():
                 return fail("workContainers.error.workspaceNotFound")
-        options = progress_options(cur)
-        error = validate_progress(progress_value, options)
-        if error:
-            return fail(error)
-        error = validate_progress_change(
-            cur, session, None, progress_value, on_create=True
-        )
-        if error:
-            return fail(error)
+        template = None
+        if template_id is not None:
+            template = fetch_template(cur, template_id)
+            if template is None or template["projectId"] != project_id:
+                return fail("workContainers.error.templateNotFound")
+        fields, error = normalize_fields(data.get("fields"), template)
+        if error is not None:
+            return error
+        error = validate_fields(cur, fields)
+        if error is not None:
+            return error
+        workflow = template_progress_workflow(cur, template)
+        if progress_value:
+            if workflow is None:
+                return fail("workContainers.error.progressNotInTemplate")
+            error = validate_progress(progress_value, workflow["options"])
+            if error:
+                return fail(error)
+            error = validate_progress_change(
+                cur, session, None, progress_value,
+                on_create=True, workflow=workflow,
+            )
+            if error:
+                return fail(error)
         cur.execute(
             'INSERT INTO "MiniPLM"."work_containers"'
             " (identifier, project_id, workspace_id, name, title, description,"
-            "  progress, author_id)"
-            " VALUES ('WC-PENDING', %s, %s, %s, %s, %s, %s, %s)",
+            "  progress, author_id, template_id, fields)"
+            " VALUES ('WC-PENDING', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 project_id,
                 workspace_id,
@@ -437,6 +719,8 @@ def do_create(ctx, session, data):
                 str(data.get("description") or "").strip() or None,
                 progress_value,
                 session.get("userId"),
+                template_id,
+                json.dumps(fields),
             ),
         )
         cur.execute(
@@ -456,7 +740,9 @@ def do_create(ctx, session, data):
             (
                 container_id,
                 session.get("userId"),
-                json.dumps(["name", "title", "description", "progress"]),
+                json.dumps(
+                    ["name", "title", "description", "template", "fields", "progress"]
+                ),
             ),
         )
     ctx.POSTGRESQL.commit()
@@ -464,7 +750,9 @@ def do_create(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(f"{CONTAINER_SELECT} WHERE c.id = %s", (container_id,))
         row = cur.fetchone()
-    return {"ok": True, "workContainer": container_row_to_dict(row)}
+        container = container_row_to_dict(row)
+        attach_container_progress_workflow(cur, container)
+    return {"ok": True, "workContainer": container}
 
 
 def do_update(ctx, session, data):
@@ -476,17 +764,24 @@ def do_update(ctx, session, data):
 
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(
-            'SELECT c.project_id, c.name, c.title, c.description, c.progress'
-            ' FROM "MiniPLM"."work_containers" c WHERE c.id = %s',
+            'SELECT c.project_id, c.name, c.title, c.description, c.progress,'
+            ' c.template_id, c.fields FROM "MiniPLM"."work_containers" c'
+            ' WHERE c.id = %s',
             (container_id,),
         )
         row = cur.fetchone()
         if not row:
             return fail("workContainers.error.notFound")
-        project_id, current_name, current_title, current_description, current_progress = row
+        (
+            project_id, current_name, current_title, current_description,
+            current_progress, current_template_id, current_fields,
+        ) = row
         modes = accessible_project_modes(cur, session.get("userId"))
         if project_id not in modes or "U" not in modes.get(project_id, set()):
             return fail("forbidden")
+
+        template = fetch_template(cur, current_template_id) if current_template_id else None
+        current_fields = current_fields if isinstance(current_fields, list) else []
 
         changed = []
         name = str(data.get("name") or "").strip() or current_name
@@ -502,31 +797,59 @@ def do_update(ctx, session, data):
         description = str(data.get("description") or "").strip() or current_description
         if description != current_description:
             changed.append("description")
-        progress_value = (
-            str(data.get("progress") or "").strip() or None
-            if "progress" in data
-            else current_progress
-        )
-        if progress_value != current_progress:
-            options = progress_options(cur)
-            error = validate_progress(progress_value, options)
-            if error:
-                return fail(error)
-            error = validate_progress_change(
-                cur, session, current_progress, progress_value
-            )
-            if error:
-                return fail(error)
-            changed.append("progress")
+
+        if "fields" in data:
+            fields, error = normalize_fields(data["fields"], template)
+            if error is not None:
+                return error
+            if template is None:
+                stated = {f["name"].lower() for f in fields}
+                for existing in current_fields:
+                    if existing["name"].lower() not in stated:
+                        fields.append(existing)
+            merged = fields
+        else:
+            merged = current_fields
+        error = validate_fields(cur, merged)
+        if error is not None:
+            return error
+        if json.dumps(merged) != json.dumps(current_fields):
+            changed.append("fields")
+
+        progress_value = current_progress
+        if "progress" in data:
+            progress_value = str(data.get("progress") or "").strip() or None
+            # The value already stored is kept as-is (legacy rows may
+            # carry a progress written before the progress field moved
+            # into the template). Only a real change is validated against
+            # the template workflow; clearing the value is always allowed.
+            if progress_value != current_progress and progress_value:
+                workflow = template_progress_workflow(cur, template)
+                if workflow is None:
+                    return fail("workContainers.error.progressNotInTemplate")
+                error = validate_progress(progress_value, workflow["options"])
+                if error:
+                    return fail(error)
+                error = validate_progress_change(
+                    cur, session, current_progress, progress_value,
+                    workflow=workflow,
+                )
+                if error:
+                    return fail(error)
+            if progress_value != current_progress:
+                changed.append("progress")
         if not changed:
             return fail("workContainers.error.noChange")
 
         cur.execute(
             'UPDATE "MiniPLM"."work_containers"'
             " SET name = %s, title = %s, description = %s, progress = %s,"
-            "     updated_at = now()"
+            "     fields = %s, updated_at = now()"
             " WHERE id = %s",
-            (name, title, description, progress_value, container_id),
+            (
+                name, title, description, progress_value,
+                json.dumps(merged), container_id,
+            ),
         )
         cur.execute(
             'INSERT INTO "MiniPLM"."work_container_history"'
@@ -539,7 +862,9 @@ def do_update(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(f"{CONTAINER_SELECT} WHERE c.id = %s", (container_id,))
         row = cur.fetchone()
-    return {"ok": True, "workContainer": container_row_to_dict(row)}
+        container = container_row_to_dict(row)
+        attach_container_progress_workflow(cur, container)
+    return {"ok": True, "workContainer": container}
 
 
 def do_delete(ctx, session, data):

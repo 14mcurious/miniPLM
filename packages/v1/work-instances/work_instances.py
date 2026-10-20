@@ -9,8 +9,10 @@ Instance fields support these types:
   number, date, string, attachment (S3 object reference), html, xml,
   custom (value(s) of a configured custom type).
 
-Progress is validated against the designated workflow progress custom type
-(see the work-containers module) when one is configured.
+Progress is a template field: when the instance's template includes a
+progress field, its value is validated against the workflow progress type
+referenced by that field (initial state on create, role-filtered
+transitions on update). Without a progress field there is no progress.
 
 Access: valid Redis session + enabled group attached to the project.
 Modes: read (any), create C, update U, delete D.
@@ -132,24 +134,22 @@ def accessible_project_modes(cur, user_id):
     return modes
 
 
-def progress_workflow(cur):
-    """Full descriptor of the designated workflow progress type.
+def workflow_type_descriptor(cur, type_name):
+    """Full descriptor of a workflow progress type by name, or None.
 
-    Returns {options, transitions, initialState} when a workflow progress
-    type is designated, or None (progress is free text).
+    Returns {options, transitions, initialState} for an enabled
+    workflow-category custom type; disabled or missing types resolve to
+    None. Only enabled types are resolvable so that a template progress
+    field degrades gracefully when its type is disabled.
     """
-    cur.execute(
-        'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
-        ("workflow_progress_type",),
-    )
-    row = cur.fetchone()
-    type_name = (row[0] if row else "").strip()
-    if not type_name:
+    name = str(type_name or "").strip()
+    if not name:
         return None
     cur.execute(
         'SELECT options, initial_state, transitions FROM "MiniPLM"."custom_types"'
-        " WHERE lower(name) = lower(%s) AND is_disabled = FALSE",
-        (type_name,),
+        " WHERE lower(name) = lower(%s) AND category = 'workflow'"
+        " AND is_disabled = FALSE",
+        (name,),
     )
     row = cur.fetchone()
     if not row:
@@ -191,12 +191,30 @@ def progress_workflow(cur):
     }
 
 
-def progress_options(cur):
-    """Options of the designated workflow progress type, or None (free text)."""
-    workflow = progress_workflow(cur)
+def template_progress_workflow(cur, template):
+    """Progress workflow of the template's progress field, or None.
+
+    A template definition may carry at most one field of type "progress";
+    its customType references the workflow progress type. The workflow
+    applies automatically: there is no global designation. Without a
+    progress field the entity has no progress at all.
+    """
+    if not isinstance(template, dict):
+        return None
+    for entry in template.get("definition") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("type") or "").strip().lower() == "progress":
+            return workflow_type_descriptor(cur, entry.get("customType"))
+    return None
+
+
+def template_progress_options(cur, template):
+    """Options of the template progress workflow, or None (no progress)."""
+    workflow = template_progress_workflow(cur, template)
     if workflow is None:
         return None
-    return [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
+    return [o for o in workflow["options"]]
 
 
 def validate_progress(progress_value, options):
@@ -221,21 +239,25 @@ def user_role_names(cur, user_id):
     return [str(row[0]) for row in cur.fetchall()]
 
 
-def validate_progress_change(cur, session, current_progress, new_value, on_create=False):
+def validate_progress_change(
+    cur, session, current_progress, new_value, on_create=False, workflow=None
+):
     """Apply the workflow transition rules to a progress value.
 
-    On create: when the workflow defines transitions, a new object must
-    start from its initial state (or leave the progress empty). On
-    update: the new state must be reachable from the current state by a
-    transition, and the user must hold the role the transition requires
-    (a null role means any user).
+    The workflow is the descriptor of the progress type referenced by the
+    entity's template (there is no global designation). On create: when
+    the workflow defines transitions, a new object must start from its
+    initial state (or leave the progress empty). On update: the new state
+    must be reachable from the current state by a transition, and the user
+    must hold the role the transition requires (a null role means any
+    user). A null workflow means the entity has no progress field: a
+    non-empty value is rejected by the caller.
     """
     value = str(new_value or "").strip()
     if not value:
         return None
-    workflow = progress_workflow(cur)
     if workflow is None:
-        return None
+        return fail("workInstances.error.progressNotInTemplate")
     transitions = workflow["transitions"]
     if on_create:
         if not transitions:
@@ -411,6 +433,10 @@ def normalize_fields(raw_fields, template):
         for definition in template.get("definition", []):
             if not isinstance(definition, dict):
                 continue
+            # The progress field lives in its own column, driven by the
+            # template's workflow progress type: it is not a JSON field.
+            if str(definition.get("type") or "").strip() == "progress":
+                continue
             field_name = str(definition.get("name") or "").strip()
             field_type = str(definition.get("type") or "string").strip()
             if field_type not in ALLOWED_TYPES:
@@ -493,6 +519,25 @@ def fetch_users(cur):
     ]
 
 
+def attach_progress_workflows(cur, instances):
+    """Attach the per-instance progress workflow (resolved from the
+    instance's template) so the UI can offer only the states reachable
+    from the current state for the user's roles. The template is shared
+    between work instances and work containers; each row carries the
+    descriptor of its template's progress field, when present."""
+    template_cache = {}
+    for instance in instances:
+        template_id = instance.get("templateId")
+        if template_id is None:
+            instance["progressWorkflow"] = None
+            continue
+        if template_id not in template_cache:
+            template_cache[template_id] = fetch_template(cur, template_id)
+        instance["progressWorkflow"] = template_progress_workflow(
+            cur, template_cache[template_id]
+        )
+
+
 def instance_row_to_dict(row):
     (
         instance_db_id, instance_id, name, project_id, project_name,
@@ -513,6 +558,7 @@ def instance_row_to_dict(row):
         "templateId": template_id,
         "templateName": template_name,
         "progress": progress,
+        "progressWorkflow": None,
         "assigneeIds": [int(x) for x in assignee_ids],
         "fields": fields if isinstance(fields, list) else [],
         "author": (
@@ -535,8 +581,6 @@ def do_list(ctx, session, data):
                 "ok": True,
                 "workInstances": [],
                 "users": [],
-                "progressOptions": None,
-                "progressWorkflow": None,
                 "userRoles": [],
             }
         project_ids = list(modes.keys())
@@ -563,19 +607,13 @@ def do_list(ctx, session, data):
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
         users = fetch_users(cur)
-        workflow = progress_workflow(cur)
         user_roles = user_role_names(cur, session.get("userId"))
-    options = (
-        [{"label": o["label"], "value": o["value"]} for o in workflow["options"]]
-        if workflow is not None
-        else None
-    )
+        instances = [instance_row_to_dict(r) for r in rows]
+        attach_progress_workflows(cur, instances)
     return {
         "ok": True,
-        "workInstances": [instance_row_to_dict(r) for r in rows],
+        "workInstances": instances,
         "users": users,
-        "progressOptions": options,
-        "progressWorkflow": workflow,
         "userRoles": user_roles,
     }
 
@@ -649,15 +687,19 @@ def do_create(ctx, session, data):
                 if int(uid) not in found:
                     return fail("workInstances.error.assignees")
 
-        options = progress_options(cur)
-        error = validate_progress(progress_value, options)
-        if error:
-            return fail(error)
-        error = validate_progress_change(
-            cur, session, None, progress_value, on_create=True
-        )
-        if error:
-            return fail(error)
+        workflow = template_progress_workflow(cur, template)
+        if progress_value:
+            if workflow is None:
+                return fail("workInstances.error.progressNotInTemplate")
+            error = validate_progress(progress_value, workflow["options"])
+            if error:
+                return fail(error)
+            error = validate_progress_change(
+                cur, session, None, progress_value,
+                on_create=True, workflow=workflow,
+            )
+            if error:
+                return fail(error)
 
         cur.execute(
             'INSERT INTO "MiniPLM"."work_instances"'
@@ -696,6 +738,11 @@ def do_get_by_db_id(ctx, session, instance_db_id):
         if not row:
             return fail("workInstances.error.notFound")
         instance = instance_row_to_dict(row)
+        if instance["templateId"] is not None:
+            template = fetch_template(cur, instance["templateId"])
+            instance["progressWorkflow"] = template_progress_workflow(
+                cur, template
+            )
         cur.execute(
             'SELECT id, login_name, name, surname FROM "MiniPLM"."users"'
             " WHERE id = ANY(%s)",
@@ -779,15 +826,23 @@ def do_update(ctx, session, data):
         progress_value = current_progress
         if "progress" in data:
             progress_value = str(data.get("progress") or "").strip() or None
-            options = progress_options(cur)
-            error = validate_progress(progress_value, options)
-            if error:
-                return fail(error)
-            error = validate_progress_change(
-                cur, session, current_progress, progress_value
-            )
-            if error:
-                return fail(error)
+            # The value already stored is kept as-is (legacy rows may
+            # carry a progress written before the progress field moved
+            # into the template). Only a real change is validated against
+            # the template workflow; clearing the value is always allowed.
+            if progress_value != current_progress and progress_value:
+                workflow = template_progress_workflow(cur, template)
+                if workflow is None:
+                    return fail("workInstances.error.progressNotInTemplate")
+                error = validate_progress(progress_value, workflow["options"])
+                if error:
+                    return fail(error)
+                error = validate_progress_change(
+                    cur, session, current_progress, progress_value,
+                    workflow=workflow,
+                )
+                if error:
+                    return fail(error)
 
         assignees = (
             [int(x) for x in current_assignees]

@@ -44,7 +44,6 @@ const WorkAreaInstanceNew = () => {
   const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
   const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
   const [users, setUsers] = useState<UserRef[]>([]);
-  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +94,6 @@ const WorkAreaInstanceNew = () => {
           api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
         ]);
       setUsers(instancesData.users ?? []);
-      setProgressWorkflow(instancesData.progressWorkflow ?? null);
       setUserRoles(instancesData.userRoles ?? []);
       setContainers(containersData.workContainers ?? []);
       setTemplates(templatesData.templates ?? []);
@@ -123,6 +121,22 @@ const WorkAreaInstanceNew = () => {
 
   const base = `/work-area/${projectId}`;
   const workspaceBack = `${base}/workspaces/${workspaceId}`;
+
+  // Progress is a template field: the offered choices come from the
+  // workflow progress type referenced by the selected template (initial
+  // state on create). Without a progress field the control is absent.
+  const selectedTemplate = form
+    ? templates.find(
+        (template) => String(template.id) === form.templateId
+      ) ?? null
+    : null;
+  const progressWorkflow = selectedTemplate?.progressWorkflow ?? null;
+  const progressOptions = allowedProgressOptions(
+    progressWorkflow,
+    userRoles,
+    form?.progress ?? "",
+    "create"
+  );
 
   return (
     <>
@@ -164,12 +178,8 @@ const WorkAreaInstanceNew = () => {
               templates={templates}
               customTypes={customTypes}
               users={users}
-              progressOptions={allowedProgressOptions(
-                progressWorkflow,
-                userRoles,
-                "",
-                "create"
-              )}
+              progressOptions={progressOptions}
+              progressEnabled={progressWorkflow !== null}
               busy={busy}
               setBusy={setBusy}
               onSaved={() => {

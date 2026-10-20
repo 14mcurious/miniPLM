@@ -8,10 +8,10 @@ import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import {
   HistoryEntry,
-  ProgressWorkflow,
   UserRef,
   WorkContainer,
   WorkInstance,
+  WorkInstanceField,
 } from "@/lib/types";
 
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
@@ -23,9 +23,23 @@ const formatUser = (user: UserRef | null): string =>
 const formatDate = (value: string | null): string =>
   value ? new Date(value).toLocaleString() : "—";
 
+const formatFieldValue = (field: WorkInstanceField): string => {
+  if (field.value == null) return "—";
+  if (typeof field.value === "boolean") return field.value ? "Yes" : "No";
+  if (Array.isArray(field.value)) return "[attachment]";
+  if (typeof field.value === "object") {
+    const attachment = field.value as { url?: string; fileName?: string };
+    return attachment.url || attachment.fileName || "[attachment]";
+  }
+  const text = String(field.value);
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
+};
+
 /**
- * Work container detail: all attributes, the modification history (who,
- * what, when) and the work instances linked to the container.
+ * Work container detail: all attributes, the template fields, the
+ * modification history (who, what, when) and the work instances linked to
+ * the container. Progress (present only when the container template defines
+ * it) shows the state value with the workflow label as a hover tooltip.
  */
 const WorkAreaContainerDetail = () => {
   const { t } = useI18n();
@@ -36,7 +50,6 @@ const WorkAreaContainerDetail = () => {
   const { status } = useAuth();
 
   const [container, setContainer] = useState<WorkContainer | null>(null);
-  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,10 +67,7 @@ const WorkAreaContainerDetail = () => {
     setLoading(true);
     setNotFound(false);
     try {
-      const listData = await api<{
-        workContainers: WorkContainer[];
-        progressWorkflow: ProgressWorkflow | null;
-      }>(
+      const listData = await api<{ workContainers: WorkContainer[] }>(
         CONTAINERS_ENDPOINT,
         {
           method: "POST",
@@ -76,7 +86,6 @@ const WorkAreaContainerDetail = () => {
         return;
       }
       setContainer(found);
-      setProgressWorkflow(listData.progressWorkflow ?? null);
       const [historyData, instancesData] = await Promise.all([
         api<{ history: HistoryEntry[] }>(CONTAINERS_ENDPOINT, {
           method: "POST",
@@ -166,16 +175,29 @@ const WorkAreaContainerDetail = () => {
                       {container.workspaceName ?? t("wa.workspaceProject")}
                     </dd>
                   </div>
+                  {container.progressWorkflow && (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+                        {t("wa.progress")}
+                      </dt>
+                      <dd className="mt-1 text-sm font-medium text-foreground">
+                        <span
+                          title={progressLabel(
+                            container.progressWorkflow,
+                            container.progress
+                          )}
+                        >
+                          {container.progress ?? "—"}
+                        </span>
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-xs uppercase tracking-wide text-muted-foreground">
-                      {t("wa.progress")}
+                      {t("wa.template")}
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
-                      <span
-                        title={progressLabel(progressWorkflow, container.progress)}
-                      >
-                        {container.progress ?? "—"}
-                      </span>
+                      {container.templateName ?? "—"}
                     </dd>
                   </div>
                   <div>
@@ -211,6 +233,25 @@ const WorkAreaContainerDetail = () => {
                     <dd className="mt-1 whitespace-pre-wrap text-sm text-foreground">
                       {container.description}
                     </dd>
+                  </div>
+                )}
+                {(container.fields ?? []).length > 0 && (
+                  <div className="mt-4 border-t pt-4">
+                    <dt className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                      {t("wa.fields")}
+                    </dt>
+                    <dl className="grid gap-4 sm:grid-cols-2">
+                      {(container.fields ?? []).map((field) => (
+                        <div key={field.name}>
+                          <dt className="text-xs text-muted-foreground">
+                            {field.name}
+                          </dt>
+                          <dd className="mt-1 break-words text-sm font-medium text-foreground">
+                            {formatFieldValue(field)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
                 )}
               </div>
@@ -288,7 +329,10 @@ const WorkAreaContainerDetail = () => {
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">
                           <span
-                            title={progressLabel(progressWorkflow, instance.progress)}
+                            title={progressLabel(
+                              instance.progressWorkflow,
+                              instance.progress
+                            )}
                           >
                             {instance.progress ?? "—"}
                           </span>

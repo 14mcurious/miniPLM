@@ -15,7 +15,7 @@ import time
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
-ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom")
+ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom", "progress")
 
 
 def redis_key(ctx, name):
@@ -131,6 +131,91 @@ def custom_type_exists(cur, name):
     return cur.fetchone() is not None
 
 
+def workflow_type_exists(cur, name):
+    """True when an enabled workflow (progress) custom type exists by name."""
+    if not name:
+        return False
+    cur.execute(
+        'SELECT 1 FROM "MiniPLM"."custom_types"'
+        " WHERE lower(name) = lower(%s) AND category = 'workflow'"
+        " AND is_disabled = FALSE",
+        (str(name),),
+    )
+    return cur.fetchone() is not None
+
+
+def workflow_type_descriptor(cur, type_name):
+    """Descriptor of a workflow (progress) custom type by name, or None.
+
+    Only enabled workflow-category types are resolvable; the descriptor
+    carries the options, the allowed transitions and the initial state
+    used to drive the progress field of the referencing template.
+    """
+    name = str(type_name or "").strip()
+    if not name:
+        return None
+    cur.execute(
+        'SELECT options, initial_state, transitions FROM "MiniPLM"."custom_types"'
+        " WHERE lower(name) = lower(%s) AND category = 'workflow'"
+        " AND is_disabled = FALSE",
+        (name,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    options = []
+    raw_options = row[0]
+    if isinstance(raw_options, list):
+        for item in raw_options:
+            if not isinstance(item, dict):
+                continue
+            value = str(item.get("value") or "").strip()
+            if not value:
+                continue
+            options.append(
+                {
+                    "label": str(item.get("label") or value).strip(),
+                    "value": value,
+                }
+            )
+    if not options:
+        return None
+    transitions = []
+    if isinstance(row[2], list):
+        for item in row[2]:
+            if not isinstance(item, dict):
+                continue
+            src = str(item.get("from") or "").strip()
+            dst = str(item.get("to") or "").strip()
+            if not src or not dst:
+                continue
+            role = item.get("role")
+            role = str(role).strip() if role not in (None, "") else None
+            transitions.append({"from": src, "to": dst, "role": role})
+    initial_state = str(row[1]).strip() if row[1] else None
+    return {
+        "options": options,
+        "transitions": transitions,
+        "initialState": initial_state,
+    }
+
+
+def template_progress_workflow(cur, definition):
+    """Progress workflow descriptor of a template definition, or None.
+
+    The definition may carry at most one field of type "progress"; its
+    customType references the workflow progress type to use. Progress is
+    applied automatically: no global designation exists.
+    """
+    entries = definition if isinstance(definition, list) else []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("type") or "").strip().lower() == "progress":
+            return workflow_type_descriptor(cur, entry.get("customType"))
+    return None
+
+
 def validate_definition(cur, raw_definition):
     """Normalize and validate the template field definitions."""
     if raw_definition is None:
@@ -139,6 +224,7 @@ def validate_definition(cur, raw_definition):
         return None, fail("templates.error.definition")
     definition = []
     seen = set()
+    progress_seen = False
     for item in raw_definition:
         if not isinstance(item, dict):
             return None, fail("templates.error.definition")
@@ -159,6 +245,15 @@ def validate_definition(cur, raw_definition):
                 return None, fail(
                     "templates.error.customTypeNotFound", field=field_name
                 )
+        elif field_type == "progress":
+            if progress_seen:
+                return None, fail("templates.error.progressMultiple")
+            progress_seen = True
+            custom_type_name = str(item.get("customType") or "").strip()
+            if not workflow_type_exists(cur, custom_type_name):
+                return None, fail(
+                    "templates.error.progressTypeNotFound", field=field_name
+                )
         description = str(item.get("description") or "").strip()
         if len(description) > 500:
             return None, fail("templates.error.fieldDescription")
@@ -173,7 +268,7 @@ def validate_definition(cur, raw_definition):
     return definition, None
 
 
-def template_to_dict(row):
+def template_to_dict(row, cur):
     (
         template_id,
         project_id,
@@ -184,12 +279,14 @@ def template_to_dict(row):
         updated_at,
         used_by,
     ) = row
+    definition = definition if isinstance(definition, list) else []
     return {
         "id": template_id,
         "projectId": project_id,
         "projectName": project_name,
         "name": name,
-        "definition": definition if isinstance(definition, list) else [],
+        "definition": definition,
+        "progressWorkflow": template_progress_workflow(cur, definition),
         "createdAt": created_at.isoformat() if created_at else None,
         "updatedAt": updated_at.isoformat() if updated_at else None,
         "usedByCount": int(used_by or 0),
@@ -199,8 +296,10 @@ def template_to_dict(row):
 TEMPLATE_SELECT = (
     "SELECT t.id, t.project_id, p.name, t.name, t.definition,"
     " t.created_at, t.updated_at,"
-    " (SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
-    "  WHERE wi.template_id = t.id) AS used_by"
+    " ((SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
+    "   WHERE wi.template_id = t.id)"
+    "  + (SELECT COUNT(*) FROM \"MiniPLM\".\"work_containers\" wc"
+    "     WHERE wc.template_id = t.id)) AS used_by"
     ' FROM "MiniPLM"."work_instance_templates" t'
     ' JOIN "MiniPLM"."projects" p ON p.id = t.project_id'
 )
@@ -228,7 +327,8 @@ def do_list(ctx, session, data):
         sql += " ORDER BY t.id"
         cur.execute(sql, tuple(params))
         rows = cur.fetchall()
-    return {"ok": True, "templates": [template_to_dict(r) for r in rows]}
+        templates = [template_to_dict(r, cur) for r in rows]
+    return {"ok": True, "templates": templates}
 
 
 def do_create(ctx, session, data):
@@ -272,7 +372,8 @@ def do_create(ctx, session, data):
             f"{TEMPLATE_SELECT} WHERE t.id = %s", (template_id,)
         )
         row = cur.fetchone()
-    return {"ok": True, "template": template_to_dict(row)}
+        result = template_to_dict(row, cur)
+    return {"ok": True, "template": result}
 
 
 def do_update(ctx, session, data):
@@ -329,7 +430,8 @@ def do_update(ctx, session, data):
     with ctx.POSTGRESQL.cursor() as cur:
         cur.execute(f"{TEMPLATE_SELECT} WHERE t.id = %s", (template_id,))
         row = cur.fetchone()
-    return {"ok": True, "template": template_to_dict(row)}
+        result = template_to_dict(row, cur)
+    return {"ok": True, "template": result}
 
 
 def do_delete(ctx, session, data):
@@ -353,6 +455,13 @@ def do_delete(ctx, session, data):
             return fail("forbidden")
         cur.execute(
             'SELECT 1 FROM "MiniPLM"."work_instances"'
+            " WHERE template_id = %s LIMIT 1",
+            (template_id,),
+        )
+        if cur.fetchone():
+            return fail("templates.error.inUse")
+        cur.execute(
+            'SELECT 1 FROM "MiniPLM"."work_containers"'
             " WHERE template_id = %s LIMIT 1",
             (template_id,),
         )

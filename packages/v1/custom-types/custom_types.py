@@ -6,8 +6,9 @@ Configuration area of the system:
 
 - category "standard": used by work instance fields of type custom;
 - category "workflow": used for progress values of work containers and
-  work instances. One workflow type can be designated as the progress type
-  (setting workflow_progress_type).
+  work instances. A template progress field (type "progress") references
+  the workflow type that drives the progress of the entities based on
+  that template: no global designation exists.
 
 Requires a valid Redis session AND the SysAdmin role on every request.
 """
@@ -267,12 +268,6 @@ def do_list(ctx, session):
             " ORDER BY ct.category, ct.name COLLATE \"C\""
         )
         rows = cur.fetchall()
-        cur.execute(
-            'SELECT value FROM "MiniPLM"."settings"'
-            " WHERE key = 'workflow_progress_type'"
-        )
-        setting = cur.fetchone()
-        progress_type_name = (setting[0] if setting else "").strip()
         # Roles with their members (user info)
         cur.execute(
             'SELECT r.id, r.name, r.created_at, r.updated_at,'
@@ -332,7 +327,6 @@ def do_list(ctx, session):
     return {
         "ok": True,
         "customTypes": [custom_type_to_dict(r) for r in rows],
-        "workflowProgressType": progress_type_name or None,
         "roles": roles,
         "roleLists": role_lists,
     }
@@ -426,31 +420,6 @@ def do_create(ctx, session, data):
         )
         row = cur.fetchone()
     return {"ok": True, "customType": custom_type_to_dict(row)}
-
-
-def set_progress_type(ctx, data):
-    """Designate (or clear) the workflow progress type by name."""
-    raw_name = data.get("name", data.get("customTypeName"))
-    type_name = str(raw_name or "").strip()
-    with ctx.POSTGRESQL.cursor() as cur:
-        if type_name:
-            cur.execute(
-                'SELECT name, category FROM "MiniPLM"."custom_types"'
-                " WHERE lower(name) = lower(%s)",
-                (type_name,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return fail("customTypes.error.notFound")
-            if row[1] != "workflow":
-                return fail("customTypes.error.progressTypeCategory")
-        cur.execute(
-            'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
-            " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            ("workflow_progress_type", type_name),
-        )
-    
-    return {"ok": True, "workflowProgressType": type_name or None}
 
 
 def do_update(ctx, session, data):
@@ -584,19 +553,6 @@ def do_update(ctx, session, data):
                 return fail("customTypes.error.nameTaken")
 
         is_disabled = bool(data.get("isDisabled", data.get("is_disabled")))
-        if is_disabled:
-            cur.execute(
-                'SELECT value FROM "MiniPLM"."settings"'
-                " WHERE key = 'workflow_progress_type'"
-            )
-            setting = cur.fetchone()
-            progress_name = (setting[0] if setting else "").strip()
-            if progress_name and progress_name.lower() == name.lower():
-                cur.execute(
-                    'UPDATE "MiniPLM"."settings" SET value = %s'
-                    " WHERE key = 'workflow_progress_type'",
-                    ("",),
-                )
         cur.execute(
             'UPDATE "MiniPLM"."custom_types"'
             " SET name = %s, value_type = %s, multi_select = %s,"
@@ -648,14 +604,8 @@ def do_delete(ctx, session, data):
         if not row:
             return fail("customTypes.error.notFound")
         type_name = row[0]
-        cur.execute(
-            'SELECT value FROM "MiniPLM"."settings"'
-            " WHERE key = 'workflow_progress_type'"
-        )
-        setting = cur.fetchone()
-        progress_name = (setting[0] if setting else "").strip()
-        if progress_name and progress_name.lower() == type_name.lower():
-            return fail("customTypes.error.inUse", field="workflowProgressType")
+        # A workflow progress type referenced by a template progress field
+        # (any template customType reference) cannot be deleted.
         cur.execute(
             'SELECT definition FROM "MiniPLM"."work_instance_templates"'
         )
@@ -933,13 +883,6 @@ def main(args, ctx=None):
                 return fail("csrf")
             with conn.cursor() as cur:
                 result = do_delete(ctx, cur, data)
-            conn.commit()
-            return result
-        if operation in ("set-progress-type", "setprogress"):
-            if not require_csrf(ctx, args, session):
-                return fail("csrf")
-            with conn.cursor() as cur:
-                result = set_progress_type(ctx, data)
             conn.commit()
             return result
         # Role operations

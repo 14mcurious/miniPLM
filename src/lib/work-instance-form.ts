@@ -144,14 +144,16 @@ export function buildFieldPayload(
   t: (key: string, params?: Record<string, string | number>) => string
 ): { fields: unknown[]; error: string | null } {
   if (currentTemplate) {
-    const fields: unknown[] = currentTemplate.definition.map((def) => ({
-      name: def.name,
-      value: coerceFieldValue(
-        def.type,
-        state.fieldValues[def.name],
-        def.customType ?? null
-      ),
-    }));
+    const fields: unknown[] = currentTemplate.definition
+      .filter((def) => def.type !== "progress")
+      .map((def) => ({
+        name: def.name,
+        value: coerceFieldValue(
+          def.type,
+          state.fieldValues[def.name],
+          def.customType ?? null
+        ),
+      }));
     return { fields, error: null };
   }
   const fields: unknown[] = [];

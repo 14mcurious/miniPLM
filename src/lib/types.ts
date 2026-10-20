@@ -31,6 +31,11 @@ export interface WorkContainer {
   title: string | null;
   description: string | null;
   progress: string | null;
+  /** Workflow descriptor of the container template's progress field, if any. */
+  progressWorkflow?: ProgressWorkflow | null;
+  templateId: number | null;
+  templateName: string | null;
+  fields: WorkInstanceField[];
   author: UserRef | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -71,6 +76,8 @@ export interface WorkInstance {
   templateId: number | null;
   templateName: string | null;
   progress: string | null;
+  /** Workflow descriptor of the instance template's progress field, if any. */
+  progressWorkflow?: ProgressWorkflow | null;
   assigneeIds: number[];
   assignees?: UserRef[];
   fields: WorkInstanceField[];
@@ -85,6 +92,11 @@ export interface InstanceTemplate {
   projectName: string;
   name: string;
   definition: FieldDef[];
+  /**
+   * Resolved workflow descriptor of the template progress field (null when
+   * the template has no progress field or the referenced type is disabled).
+   */
+  progressWorkflow?: ProgressWorkflow | null;
   createdAt: string | null;
   updatedAt: string | null;
   usedByCount: number;

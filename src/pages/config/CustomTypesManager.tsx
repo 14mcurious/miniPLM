@@ -31,7 +31,6 @@ interface Props {
 const CustomTypesManager = ({ category, editorRoutes }: Props) => {
   const { t } = useI18n();
   const [types, setTypes] = useState<CustomType[]>([]);
-  const [progressType, setProgressType] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +62,6 @@ const CustomTypesManager = ({ category, editorRoutes }: Props) => {
     try {
       const data = await api<{
         customTypes: CustomType[];
-        workflowProgressType: string | null;
         roles: Role[];
         roleLists: RoleList[];
       }>(CUSTOM_TYPES_ENDPOINT);
@@ -73,7 +71,6 @@ const CustomTypesManager = ({ category, editorRoutes }: Props) => {
         )
       );
       if (category === "workflow") {
-        setProgressType(data.workflowProgressType ?? null);
         setRoleLists(
           (data.roleLists ?? []).map((rl) => ({
             id: rl.id,
@@ -218,25 +215,6 @@ const CustomTypesManager = ({ category, editorRoutes }: Props) => {
       await load();
     } catch (err) {
       toast.error(translate(err));
-    }
-  };
-
-  const saveProgressType = async (selected: string) => {
-    setBusy(true);
-    try {
-      await api(CUSTOM_TYPES_ENDPOINT, {
-        method: "POST",
-        body: JSON.stringify({
-          operation: "set-progress-type",
-          name: selected,
-        }),
-      });
-      toast.success(t("ct.progressTypeSaved"));
-      setProgressType(selected || null);
-    } catch (err) {
-      toast.error(translate(err));
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -502,39 +480,6 @@ const CustomTypesManager = ({ category, editorRoutes }: Props) => {
           ? t("ct.workflowHint")
           : t("ct.standardHint")}
       </p>
-
-      {category === "workflow" && (
-        <div className="flex flex-wrap items-end gap-3 rounded-md border p-3">
-          <div>
-            <label
-              htmlFor="progress-type"
-              className="mb-1 block text-sm font-medium text-foreground"
-            >
-              {t("ct.progressType")}
-            </label>
-            <select
-              id="progress-type"
-              name="progressType"
-              value={progressType ?? ""}
-              onChange={(e) => void saveProgressType(e.target.value)}
-              disabled={busy}
-              className="h-10 w-64 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-            >
-              <option value="">{t("ct.progressTypeNone")}</option>
-              {types
-                .filter((type) => !type.isDisabled)
-                .map((type) => (
-                  <option key={type.id} value={type.name}>
-                    {type.name}
-                  </option>
-                ))}
-            </select>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {t("ct.progressTypeHint")}
-          </p>
-        </div>
-      )}
 
       {error && (
         <div

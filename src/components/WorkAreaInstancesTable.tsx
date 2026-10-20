@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { progressLabel } from "@/lib/workflow-progress";
-import { ProgressWorkflow, WorkInstance } from "@/lib/types";
+import { WorkInstance } from "@/lib/types";
 
 const formatDate = (value: string | null): string =>
   value ? new Date(value).toLocaleString() : "—";
@@ -10,18 +10,14 @@ interface WorkAreaInstancesTableProps {
   /** Work area base path, e.g. /work-area/<projectId>. */
   base: string;
   instances: WorkInstance[];
-  progressWorkflow: ProgressWorkflow | null;
 }
 
 /**
  * Read-only table of the work instances of a work space's containers.
- * Progress cells carry the workflow state description as a hover tooltip.
+ * Progress cells carry the workflow state label of the instance's own
+ * template progress workflow as a hover tooltip.
  */
-const WorkAreaInstancesTable = ({
-  base,
-  instances,
-  progressWorkflow,
-}: WorkAreaInstancesTableProps) => {
+const WorkAreaInstancesTable = ({ base, instances }: WorkAreaInstancesTableProps) => {
   const { t } = useI18n();
 
   return (
@@ -54,7 +50,12 @@ const WorkAreaInstancesTable = ({
               {instance.workContainerName}
             </td>
             <td className="px-2 py-2 text-muted-foreground">
-              <span title={progressLabel(progressWorkflow, instance.progress)}>
+              <span
+                title={progressLabel(
+                  instance.progressWorkflow,
+                  instance.progress
+                )}
+              >
                 {instance.progress ?? "—"}
               </span>
             </td>

@@ -261,6 +261,25 @@ STATEMENTS = [
         'CREATE UNIQUE INDEX IF NOT EXISTS role_list_name_uniq_idx'
         ' ON "MiniPLM"."role_lists" (lower(name))'
     ),
+    # Work containers follow templates just like work instances: the
+    # shared template reference and the template field values stored on
+    # the container. Progress is a template field, never a default one.
+    (
+        'ALTER TABLE "MiniPLM"."work_containers"'
+        ' ADD COLUMN IF NOT EXISTS template_id BIGINT'
+        ' REFERENCES "MiniPLM"."work_instance_templates"(id) ON DELETE SET NULL'
+    ),
+    (
+        'ALTER TABLE "MiniPLM"."work_containers"'
+        " ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '[]'"
+    ),
+    # Legacy global workflow-progress-type designation (removed): the
+    # progress type is now selected per template. Drop the deprecated
+    # setting row when present (idempotent no-op on fresh instances).
+    (
+        'DELETE FROM "MiniPLM"."settings"'
+        " WHERE key = 'workflow_progress_type'"
+    ),
     (
         'CREATE TABLE IF NOT EXISTS "MiniPLM"."role_list_members" ('
         '  role_list_id BIGINT NOT NULL REFERENCES "MiniPLM"."role_lists"(id) ON DELETE CASCADE,'

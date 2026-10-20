@@ -32,6 +32,12 @@ export interface InstanceFormProps {
   customTypes: CustomType[];
   users: UserRef[];
   progressOptions: ProgressOption[];
+  /**
+   * True when the selected template includes a progress field. The progress
+   * control is rendered only in that case (progress is a template field,
+   * never a default one).
+   */
+  progressEnabled: boolean;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   /** Called after a successful create/update; receives the saved instance id. */
@@ -54,6 +60,7 @@ const InstanceForm = ({
   customTypes,
   users,
   progressOptions,
+  progressEnabled,
   busy,
   setBusy,
   onSaved,
@@ -238,7 +245,9 @@ const InstanceForm = ({
               const fieldValues: Record<string, unknown> = {};
               if (template) {
                 for (const def of template.definition) {
-                  fieldValues[def.name] = "";
+                  if (def.type !== "progress") {
+                    fieldValues[def.name] = "";
+                  }
                 }
               }
               setForm({
@@ -246,6 +255,9 @@ const InstanceForm = ({
                 templateId,
                 fieldValues,
                 adHoc: [],
+                // A different template means a different progress workflow:
+                // the previous value is not valid for the new one.
+                progress: "",
               });
             }}
             disabled={busy || form.mode === "update"}
@@ -261,11 +273,11 @@ const InstanceForm = ({
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="instance-progress" className={labelClass}>
-            {t("wa.progress")}
-          </label>
-          {progressOptions.length > 0 ? (
+        {progressEnabled && (
+          <div>
+            <label htmlFor="instance-progress" className={labelClass}>
+              {t("wa.progress")}
+            </label>
             <select
               id="instance-progress"
               name="instanceProgress"
@@ -287,18 +299,8 @@ const InstanceForm = ({
                 </option>
               ))}
             </select>
-          ) : (
-            <Input
-              id="instance-progress"
-              name="instanceProgress"
-              value={form.progress}
-              onChange={(e) =>
-                setForm({ ...form, progress: e.target.value })
-              }
-              disabled={busy}
-            />
-          )}
-        </div>
+          </div>
+        )}
         <div>
           <span className={labelClass}>{t("wa.assignees")}</span>
           <div className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-input bg-background p-2">
@@ -346,26 +348,28 @@ const InstanceForm = ({
           <h3 className="text-base font-semibold text-foreground">
             {t("wa.templateFields", { name: currentTemplate.name })}
           </h3>
-          {currentTemplate.definition.map((def) => (
-            <FieldEditor
-              key={def.name}
-              def={def}
-              customTypes={customTypes}
-              value={form.fieldValues[def.name]}
-              busy={busy}
-              uploading={uploadingField === def.name}
-              onChange={(value) =>
-                setForm({
-                  ...form,
-                  fieldValues: {
-                    ...form.fieldValues,
-                    [def.name]: value,
-                  },
-                })
-              }
-              onFile={(file) => uploadFile(def.name, file)}
-            />
-          ))}
+          {currentTemplate.definition
+            .filter((def) => def.type !== "progress")
+            .map((def) => (
+              <FieldEditor
+                key={def.name}
+                def={def}
+                customTypes={customTypes}
+                value={form.fieldValues[def.name]}
+                busy={busy}
+                uploading={uploadingField === def.name}
+                onChange={(value) =>
+                  setForm({
+                    ...form,
+                    fieldValues: {
+                      ...form.fieldValues,
+                      [def.name]: value,
+                    },
+                  })
+                }
+                onFile={(file) => uploadFile(def.name, file)}
+              />
+            ))}
         </div>
       ) : (
         <div className="space-y-3 border-t pt-4">

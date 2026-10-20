@@ -46,6 +46,9 @@ const WorkInstanceTemplates = () => {
   const [projectId, setProjectId] = useState<string>("");
   const [name, setName] = useState("");
   const [fields, setFields] = useState<FieldDef[]>([]);
+  // Workflow progress type bound to the template progress field ("") when
+  // the template has no progress field.
+  const [progressType, setProgressType] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -94,6 +97,7 @@ const WorkInstanceTemplates = () => {
     setProjectId(projects.length === 1 ? String(projects[0].id) : "");
     setName("");
     setFields([]);
+    setProgressType("");
     setFormError(null);
   };
 
@@ -101,13 +105,19 @@ const WorkInstanceTemplates = () => {
     setFormMode({ mode: "update", id: template.id, project: template.projectName });
     setName(template.name);
     setFields(
-      template.definition.map((def) => ({
-        name: def.name,
-        type: def.type,
-        description: def.description ?? "",
-        customType: def.customType ?? null,
-      }))
+      template.definition
+        .filter((def) => def.type !== "progress")
+        .map((def) => ({
+          name: def.name,
+          type: def.type,
+          description: def.description ?? "",
+          customType: def.customType ?? null,
+        }))
     );
+    const progressEntry = template.definition.find(
+      (def) => def.type === "progress"
+    );
+    setProgressType(progressEntry?.customType ?? "");
     setFormError(null);
   };
 
@@ -188,7 +198,7 @@ const WorkInstanceTemplates = () => {
                   setFormError(t("wa.error.nameRequired"));
                   return;
                 }
-                if (fields.length === 0) {
+                if (fields.length === 0 && !progressType) {
                   setFormError(t("wa.error.fieldsRequired"));
                   return;
                 }
@@ -199,15 +209,26 @@ const WorkInstanceTemplates = () => {
                 setBusy(true);
                 setFormError(null);
                 try {
-                  const payload: Record<string, unknown> = {
-                    name: name.trim(),
-                    definition: fields.map((field) => ({
+                  const definition: Record<string, unknown>[] = fields.map(
+                    (field) => ({
                       name: field.name.trim(),
                       type: field.type,
                       description: field.description ?? "",
                       customType:
                         field.type === "custom" ? field.customType ?? null : null,
-                    })),
+                    })
+                  );
+                  if (progressType) {
+                    definition.push({
+                      name: "progress",
+                      type: "progress",
+                      description: "",
+                      customType: progressType,
+                    });
+                  }
+                  const payload: Record<string, unknown> = {
+                    name: name.trim(),
+                    definition,
                   };
                   if (formMode.mode === "create") {
                     payload.operation = "create";
@@ -275,6 +296,34 @@ const WorkInstanceTemplates = () => {
                   onChange={(e) => setName(e.target.value)}
                   disabled={busy}
                 />
+              </div>
+
+              <div className="rounded-md border p-3">
+                <label htmlFor="template-progress-type" className={labelClass}>
+                  {t("instanceTemplates.progressType")}
+                </label>
+                <select
+                  id="template-progress-type"
+                  name="templateProgressType"
+                  value={progressType}
+                  onChange={(e) => setProgressType(e.target.value)}
+                  disabled={busy}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                >
+                  <option value="">{t("instanceTemplates.progressNone")}</option>
+                  {customTypes
+                    .filter(
+                      (type) => type.category === "workflow" && !type.isDisabled
+                    )
+                    .map((type) => (
+                      <option key={type.id} value={type.name}>
+                        {type.name}
+                      </option>
+                    ))}
+                </select>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("instanceTemplates.progressHint")}
+                </p>
               </div>
 
               <div className="space-y-3">
@@ -411,6 +460,7 @@ const WorkInstanceTemplates = () => {
                   <th className="px-2 py-2">{t("wa.name")}</th>
                   <th className="px-2 py-2">{t("instanceTemplates.project")}</th>
                   <th className="px-2 py-2">{t("wa.fields")}</th>
+                  <th className="px-2 py-2">{t("instanceTemplates.progressType")}</th>
                   <th className="px-2 py-2">{t("wa.usedBy")}</th>
                   <th className="px-2 py-2">{t("wa.updated")}</th>
                   <th className="px-2 py-2" aria-label="actions" />
@@ -427,8 +477,12 @@ const WorkInstanceTemplates = () => {
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {template.definition
+                        .filter((def) => def.type !== "progress")
                         .map((def) => def.name)
                         .join(", ") || "—"}
+                    </td>
+                    <td className="px-2 py-2 text-muted-foreground">
+                      {template.progressWorkflow?.name ?? "—"}
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {template.usedByCount}

@@ -10,7 +10,6 @@ import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import {
   AttachmentValue,
-  ProgressWorkflow,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -69,7 +68,6 @@ const WorkAreaInstanceDetail = () => {
   const [containerWorkspaceId, setContainerWorkspaceId] = useState<
     number | null
   >(null);
-  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -91,21 +89,17 @@ const WorkAreaInstanceDetail = () => {
           body: JSON.stringify({ operation: "get", id: Number(instanceId) }),
         }),
         projectId
-          ? api<{
-              workContainers: WorkContainer[];
-              progressWorkflow: ProgressWorkflow | null;
-            }>(CONTAINERS_ENDPOINT, {
+          ? api<{ workContainers: WorkContainer[] }>(CONTAINERS_ENDPOINT, {
               method: "POST",
               body: JSON.stringify({
                 operation: "list",
                 projectId: Number(projectId),
               }),
             })
-          : Promise.resolve({ workContainers: [], progressWorkflow: null }),
+          : Promise.resolve({ workContainers: [] }),
       ]);
       const foundInstance = data.workInstance ?? null;
       setInstance(foundInstance);
-      setProgressWorkflow(containersData.progressWorkflow ?? null);
       if (foundInstance) {
         const container = containersData.workContainers?.find(
           (item) =>
@@ -246,7 +240,10 @@ const WorkAreaInstanceDetail = () => {
                     </dt>
                     <dd className="mt-1 text-sm font-medium text-foreground">
                       <span
-                        title={progressLabel(progressWorkflow, instance.progress)}
+                        title={progressLabel(
+                          instance.progressWorkflow,
+                          instance.progress
+                        )}
                       >
                         {instance.progress ?? "—"}
                       </span>

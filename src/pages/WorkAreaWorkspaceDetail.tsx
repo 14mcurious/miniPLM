@@ -12,22 +12,27 @@ import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import { allowedProgressOptions, progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
+import FieldEditor from "@/components/FieldEditor";
 import InstanceForm from "@/components/InstanceForm";
 import WorkAreaContainersTable from "@/components/WorkAreaContainersTable";
 import WorkAreaInstancesTable from "@/components/WorkAreaInstancesTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  AD_HOC_TYPES,
+  ATTACHMENTS_ENDPOINT,
   CUSTOM_TYPES_ENDPOINT,
+  MAX_UPLOAD,
   TEMPLATES_ENDPOINT,
+  buildFieldPayload,
+  fileToBase64,
   toFormValue,
   type FormState,
 } from "@/lib/work-instance-form";
 import {
+  AttachmentValue,
   CustomType,
   InstanceTemplate,
-  ProgressOption,
-  ProgressWorkflow,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -55,8 +60,6 @@ const WorkAreaWorkspaceDetail = () => {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [containers, setContainers] = useState<WorkContainer[]>([]);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
-  const [progressOptions, setProgressOptions] = useState<ProgressOption[]>([]);
-  const [progressWorkflow, setProgressWorkflow] = useState<ProgressWorkflow | null>(null);
   const [userRoles, setUserRoles] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRef[]>([]);
   const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
@@ -75,6 +78,18 @@ const WorkAreaWorkspaceDetail = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [progress, setProgress] = useState("");
+  // Containers use the same template library as work instances: template,
+  // template fields and (when the template defines it) progress.
+  const [containerTemplateId, setContainerTemplateId] = useState("");
+  const [containerFieldValues, setContainerFieldValues] = useState<
+    Record<string, unknown>
+  >({});
+  const [containerAdHoc, setContainerAdHoc] = useState<
+    { name: string; type: string; customType: string; value: string }[]
+  >([]);
+  const [containerUploading, setContainerUploading] = useState<
+    string | null
+  >(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -91,8 +106,13 @@ const WorkAreaWorkspaceDetail = () => {
     setNotFound(false);
     setError(null);
     try {
-      const [workspacesData, containersData, instancesData] =
-        await Promise.all([
+      const [
+        workspacesData,
+        containersData,
+        instancesData,
+        templatesData,
+        customTypesData,
+      ] = await Promise.all([
           api<{ workspaces: Workspace[] }>(WORKSPACES_ENDPOINT, {
             method: "POST",
             body: JSON.stringify({
@@ -102,8 +122,6 @@ const WorkAreaWorkspaceDetail = () => {
           }),
           api<{
             workContainers: WorkContainer[];
-            progressOptions: ProgressOption[] | null;
-            progressWorkflow: ProgressWorkflow | null;
             userRoles: string[];
           }>(CONTAINERS_ENDPOINT, {
             method: "POST",
@@ -123,6 +141,14 @@ const WorkAreaWorkspaceDetail = () => {
               projectId: Number(projectId),
             }),
           }),
+          api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "list",
+              projectId: Number(projectId),
+            }),
+          }),
+          api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
         ]);
       const found =
         workspacesData.workspaces?.find(
@@ -135,9 +161,9 @@ const WorkAreaWorkspaceDetail = () => {
       setWorkspace(found);
       const workspaceContainers = containersData.workContainers ?? [];
       setContainers(workspaceContainers);
-      setProgressOptions(containersData.progressOptions ?? []);
-      setProgressWorkflow(containersData.progressWorkflow ?? null);
       setUserRoles(containersData.userRoles ?? []);
+      setTemplates(templatesData.templates ?? []);
+      setCustomTypes(customTypesData.customTypes ?? []);
       // Instances of the containers belonging to this work space.
       const containerIds = new Set(
         workspaceContainers.map((c) => String(c.id))
@@ -183,6 +209,9 @@ const WorkAreaWorkspaceDetail = () => {
     setTitle("");
     setDescription("");
     setProgress("");
+    setContainerTemplateId("");
+    setContainerFieldValues({});
+    setContainerAdHoc([]);
     setFormError(null);
   };
 
@@ -192,6 +221,15 @@ const WorkAreaWorkspaceDetail = () => {
     setTitle(container.title ?? "");
     setDescription(container.description ?? "");
     setProgress(container.progress ?? "");
+    setContainerTemplateId(
+      container.templateId ? String(container.templateId) : ""
+    );
+    const fieldValues: Record<string, unknown> = {};
+    for (const field of container.fields ?? []) {
+      fieldValues[field.name] = toFormValue(field);
+    }
+    setContainerFieldValues(fieldValues);
+    setContainerAdHoc([]);
     setFormError(null);
   };
 
@@ -204,31 +242,20 @@ const WorkAreaWorkspaceDetail = () => {
     instanceDbId: number,
     fromUrl = false
   ): Promise<void> => {
-    if (!projectId) return;
     try {
-      const [instanceData, templatesData, customTypesData] =
-        await Promise.all([
-          api<{ workInstance: WorkInstance }>(INSTANCES_ENDPOINT, {
-            method: "POST",
-            body: JSON.stringify({ operation: "get", id: instanceDbId }),
-          }),
-          api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
-            method: "POST",
-            body: JSON.stringify({
-              operation: "list",
-              projectId: Number(projectId),
-            }),
-          }),
-          api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
-        ]);
+      const instanceData = await api<{ workInstance: WorkInstance }>(
+        INSTANCES_ENDPOINT,
+        {
+          method: "POST",
+          body: JSON.stringify({ operation: "get", id: instanceDbId }),
+        }
+      );
       const instance = instanceData.workInstance;
       if (!instance) return;
       const fieldValues: Record<string, unknown> = {};
       for (const field of instance.fields) {
         fieldValues[field.name] = toFormValue(field);
       }
-      setTemplates(templatesData.templates ?? []);
-      setCustomTypes(customTypesData.customTypes ?? []);
       setEditForm({
         mode: "update",
         id: instanceDbId,
@@ -252,18 +279,62 @@ const WorkAreaWorkspaceDetail = () => {
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
-  // Progress choices offered by the workflow definition for the current
-  // form (create starts from the initial state; update offers only the
-  // transitions the user's role can use). Without a workflow type the
-  // free-text list applies.
-  const containerProgressOptions = progressWorkflow
-    ? allowedProgressOptions(
-        progressWorkflow,
-        userRoles,
-        progress,
-        formMode?.mode === "update" ? "update" : "create"
-      )
-    : progressOptions;
+  // Containers share the template library with work instances: progress is
+  // a template field, so the offered choices come from the selected
+  // template's workflow (create: initial state; update: role-filtered
+  // transitions). Without a progress field the control is absent.
+  const containerTemplate =
+    templates.find(
+      (template) => String(template.id) === containerTemplateId
+    ) ?? null;
+  const containerProgressWorkflow =
+    containerTemplate?.progressWorkflow ?? null;
+  const containerProgressOptions = allowedProgressOptions(
+    containerProgressWorkflow,
+    userRoles,
+    progress,
+    formMode?.mode === "update" ? "update" : "create"
+  );
+
+  // The instance edit form offers the progress choices of the template
+  // currently selected in the form (the row's template when opened).
+  const editTemplate = editForm
+    ? templates.find(
+        (template) => String(template.id) === editForm.templateId
+      ) ?? null
+    : null;
+  const editProgressWorkflow = editTemplate?.progressWorkflow ?? null;
+
+  const uploadContainerFile = async (fieldName: string, file: File) => {
+    if (file.size > MAX_UPLOAD) {
+      setFormError(t("wa.error.attachmentTooLarge", { max: "5 MB" }));
+      return;
+    }
+    setContainerUploading(fieldName);
+    try {
+      const base64 = await fileToBase64(file);
+      const data = await api<{ attachment: AttachmentValue }>(
+        ATTACHMENTS_ENDPOINT,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "upload",
+            fileName: file.name,
+            contentType: file.type || "application/octet-stream",
+            content: base64,
+          }),
+        }
+      );
+      setContainerFieldValues((prev) => ({
+        ...prev,
+        [fieldName]: data.attachment,
+      }));
+    } catch (err) {
+      toast.error(translate(err));
+    } finally {
+      setContainerUploading(null);
+    }
+  };
 
   const labelClass = "mb-1 block text-sm font-medium text-foreground";
   const base = `/work-area/${projectId}`;
@@ -333,6 +404,26 @@ const WorkAreaWorkspaceDetail = () => {
                       setBusy(true);
                       setFormError(null);
                       try {
+                        const {
+                          fields: templateFields,
+                          error: fieldsError,
+                        } = buildFieldPayload(
+                          {
+                            mode: "update",
+                            name: "",
+                            workContainerId: "",
+                            templateId: containerTemplateId,
+                            progress: "",
+                            assigneeIds: [],
+                            fieldValues: containerFieldValues,
+                            adHoc: containerAdHoc,
+                          },
+                          containerTemplate
+                        );
+                        if (fieldsError) {
+                          setFormError(translate(fieldsError));
+                          return;
+                        }
                         const payload: Record<string, unknown> = {
                           projectId: Number(projectId),
                           workspaceId: Number(workspaceId),
@@ -340,6 +431,10 @@ const WorkAreaWorkspaceDetail = () => {
                           title: title.trim(),
                           description: description.trim(),
                           progress: progress.trim() || null,
+                          templateId: containerTemplateId
+                            ? Number(containerTemplateId)
+                            : null,
+                          fields: templateFields,
                         };
                         if (formMode.mode === "create") {
                           payload.operation = "create";
@@ -392,6 +487,79 @@ const WorkAreaWorkspaceDetail = () => {
                         />
                       </div>
                     </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="container-template" className={labelClass}>
+                          {t("wa.template")}
+                        </label>
+                        <select
+                          id="container-template"
+                          name="containerTemplate"
+                          value={containerTemplateId}
+                          onChange={(e) => {
+                            const templateId = e.target.value;
+                            const template = templates.find(
+                              (item) => String(item.id) === templateId
+                            );
+                            const fieldValues: Record<string, unknown> = {};
+                            if (template) {
+                              for (const def of template.definition) {
+                                if (def.type !== "progress") {
+                                  fieldValues[def.name] = "";
+                                }
+                              }
+                            }
+                            setContainerTemplateId(templateId);
+                            setContainerFieldValues(fieldValues);
+                            setContainerAdHoc([]);
+                            // A different template means a different
+                            // progress workflow: reset the value.
+                            setProgress("");
+                          }}
+                          disabled={busy || formMode?.mode === "update"}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                        >
+                          <option value="">{t("wa.templateNone")}</option>
+                          {templates.map((template) => (
+                            <option
+                              key={template.id}
+                              value={String(template.id)}
+                            >
+                              {template.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {containerProgressWorkflow && (
+                        <div>
+                          <label
+                            htmlFor="container-progress"
+                            className={labelClass}
+                          >
+                            {t("wa.progress")}
+                          </label>
+                          <select
+                            id="container-progress"
+                            name="containerProgress"
+                            value={progress}
+                            onChange={(e) => setProgress(e.target.value)}
+                            disabled={busy}
+                            className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                          >
+                            <option value="">{t("wa.progressNone")}</option>
+                            {containerProgressOptions.map((option) => (
+                              <option
+                                key={option.value}
+                                value={option.value}
+                                title={option.label || option.value}
+                              >
+                                {option.value}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
                     <div>
                       <label
                         htmlFor="container-description"
@@ -407,30 +575,168 @@ const WorkAreaWorkspaceDetail = () => {
                         disabled={busy}
                       />
                     </div>
-                    <div>
-                      <label htmlFor="container-progress" className={labelClass}>
-                        {t("wa.progress")}
-                      </label>
-                      <select
-                        id="container-progress"
-                        name="containerProgress"
-                        value={progress}
-                        onChange={(e) => setProgress(e.target.value)}
-                        disabled={busy}
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-                      >
-                        <option value="">—</option>
-                        {containerProgressOptions.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            title={option.label || option.value}
+                    {containerTemplate &&
+                      containerTemplate.definition.filter(
+                        (def) => def.type !== "progress"
+                      ).length > 0 && (
+                        <div className="space-y-4 border-t pt-4">
+                          <h3 className="text-base font-semibold text-foreground">
+                            {t("wa.templateFields", {
+                              name: containerTemplate.name,
+                            })}
+                          </h3>
+                          {containerTemplate.definition
+                            .filter((def) => def.type !== "progress")
+                            .map((def) => (
+                              <FieldEditor
+                                key={def.name}
+                                def={def}
+                                customTypes={customTypes}
+                                value={containerFieldValues[def.name]}
+                                busy={busy}
+                                uploading={
+                                  containerUploading === def.name
+                                }
+                                onChange={(value) =>
+                                  setContainerFieldValues((prev) => ({
+                                    ...prev,
+                                    [def.name]: value,
+                                  }))
+                                }
+                                onFile={(file) =>
+                                  void uploadContainerFile(def.name, file)
+                                }
+                              />
+                            ))}
+                        </div>
+                      )}
+                    {containerTemplate && (
+                      <div className="space-y-3 border-t pt-4">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-base font-semibold text-foreground">
+                            {t("wa.adHocFields")}
+                          </h3>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              setContainerAdHoc([
+                                ...containerAdHoc,
+                                {
+                                  name: "",
+                                  type: "string",
+                                  customType: "",
+                                  value: "",
+                                },
+                              ])
+                            }
                           >
-                            {option.value}
-                          </option>
+                            {t("wa.addField")}
+                          </Button>
+                        </div>
+                        {containerAdHoc.length === 0 && (
+                          <p className="text-sm text-muted-foreground">
+                            {t("wa.adHocHint")}
+                          </p>
+                        )}
+                        {containerAdHoc.map((item, index) => (
+                          <div
+                            key={index}
+                            className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
+                          >
+                            <Input
+                              id={`container-adhoc-name-${index}`}
+                              name={`containerAdhocName${index}`}
+                              placeholder={t("wa.fieldName")}
+                              value={item.name}
+                              onChange={(e) => {
+                                const next = [...containerAdHoc];
+                                next[index] = { ...item, name: e.target.value };
+                                setContainerAdHoc(next);
+                              }}
+                              disabled={busy}
+                            />
+                            <select
+                              id={`container-adhoc-type-${index}`}
+                              name={`containerAdhocType${index}`}
+                              value={item.type}
+                              onChange={(e) => {
+                                const next = [...containerAdHoc];
+                                next[index] = { ...item, type: e.target.value };
+                                setContainerAdHoc(next);
+                              }}
+                              disabled={busy}
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                            >
+                              {AD_HOC_TYPES.map((typeValue) => (
+                                <option key={typeValue} value={typeValue}>
+                                  {t(`fieldType.${typeValue}`)}
+                                </option>
+                              ))}
+                            </select>
+                            {item.type === "custom" ? (
+                              <select
+                                id={`container-adhoc-custom-${index}`}
+                                name={`containerAdhocCustomType${index}`}
+                                value={item.customType}
+                                onChange={(e) => {
+                                  const next = [...containerAdHoc];
+                                  next[index] = {
+                                    ...item,
+                                    customType: e.target.value,
+                                  };
+                                  setContainerAdHoc(next);
+                                }}
+                                disabled={busy}
+                                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
+                              >
+                                <option value="">—</option>
+                                {customTypes
+                                  .filter((type) => !type.isDisabled)
+                                  .map((type) => (
+                                    <option key={type.id} value={type.name}>
+                                      {type.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            ) : (
+                              <span className="hidden sm:block" aria-hidden="true" />
+                            )}
+                            <div className="sm:col-span-4">
+                              <Input
+                                id={`container-adhoc-value-${index}`}
+                                name={`containerAdhocValue${index}`}
+                                placeholder={t("wa.fieldValue")}
+                                value={item.value}
+                                onChange={(e) => {
+                                  const next = [...containerAdHoc];
+                                  next[index] = { ...item, value: e.target.value };
+                                  setContainerAdHoc(next);
+                                }}
+                                disabled={busy}
+                              />
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                setContainerAdHoc(
+                                  containerAdHoc.filter(
+                                    (_, i) => i !== index
+                                  )
+                                )
+                              }
+                            >
+                              {t("wa.remove")}
+                            </Button>
+                          </div>
                         ))}
-                      </select>
-                    </div>
+                      </div>
+                    )}
                     {formError && (
                       <p role="alert" className="text-sm text-destructive">
                         {formError}
@@ -459,7 +765,6 @@ const WorkAreaWorkspaceDetail = () => {
                   <WorkAreaContainersTable
                     base={base}
                     containers={containers}
-                    progressWorkflow={progressWorkflow}
                     canEdit={can("U")}
                     canDelete={can("D")}
                     onEdit={openUpdate}
@@ -500,11 +805,12 @@ const WorkAreaWorkspaceDetail = () => {
                       customTypes={customTypes}
                       users={users}
                       progressOptions={allowedProgressOptions(
-                        progressWorkflow,
+                        editProgressWorkflow,
                         userRoles,
                         editForm.progress,
                         "update"
                       )}
+                      progressEnabled={editProgressWorkflow !== null}
                       busy={editBusy}
                       setBusy={setEditBusy}
                       onSaved={() => {
@@ -523,7 +829,6 @@ const WorkAreaWorkspaceDetail = () => {
                   <WorkAreaInstancesTable
                     base={base}
                     instances={instances}
-                    progressWorkflow={progressWorkflow}
                   />
                 )}
               </section>

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import BackLink from "@/components/BackLink";
+import OtpStep from "@/components/OtpStep";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -59,6 +60,11 @@ const UserEdit = () => {
   const [passwordErrors, setPasswordErrors] = useState<Record<string, string>>(
     {}
   );
+  const [pwOtpStep, setPwOtpStep] = useState<"form" | "otp">("form");
+  const [pwDelivery, setPwDelivery] = useState("email");
+  const [pwDemoOtp, setPwDemoOtp] = useState<string | undefined>(undefined);
+  const [pwSentTo, setPwSentTo] = useState("");
+  const [pwOtpError, setPwOtpError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +126,16 @@ const UserEdit = () => {
     }
   };
 
+  const closeChangePassword = () => {
+    setShowChangePassword(false);
+    setNewPassword("");
+    setNewPasswordVerify("");
+    setPasswordErrors({});
+    setPwOtpStep("form");
+    setPwDemoOtp(undefined);
+    setPwOtpError(null);
+  };
+
   const handleConfirmChangePassword = async () => {
     if (!user || busy) return;
     const errors: Record<string, string> = {};
@@ -136,20 +152,25 @@ const UserEdit = () => {
     if (Object.keys(errors).length > 0) return;
 
     setBusy(true);
+    setPwOtpError(null);
     try {
-      const data = await api<{ user: UserDetails }>(USERS_ENDPOINT, {
-        method: "POST",
-        body: JSON.stringify({
-          operation: "change-password",
-          id: user.id,
-          password: newPassword,
-        }),
-      });
-      setUser(data.user);
-      setShowChangePassword(false);
-      setNewPassword("");
-      setNewPasswordVerify("");
-      toast.success(t("newUser.passwordChanged"));
+      // Stage the change and email the one-time code to the user's
+      // CURRENT mailbox; the password is applied only after the code.
+      const data = await api<{ delivery: string; demoOtp?: string; email?: string }>(
+        USERS_ENDPOINT,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            operation: "change-password",
+            id: user.id,
+            password: newPassword,
+          }),
+        }
+      );
+      setPwDelivery(data.delivery);
+      setPwDemoOtp(data.demoOtp);
+      setPwSentTo(data.email || user.email);
+      setPwOtpStep("otp");
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -159,6 +180,34 @@ const UserEdit = () => {
         setPasswordErrors({ newPassword: error.serverKey });
       }
       toast.error(
+        error instanceof ApiError && error.serverKey
+          ? t(error.serverKey, error.serverParams ?? undefined)
+          : t("error.requestFailed", { status: "?" })
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmPasswordOtp = async (otp: string) => {
+    if (!user || busy) return;
+    setBusy(true);
+    setPwOtpError(null);
+    try {
+      const data = await api<{ user: UserDetails }>(USERS_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({
+          operation: "confirm-change-password",
+          id: user.id,
+          otp,
+          password: newPassword,
+        }),
+      });
+      setUser(data.user);
+      toast.success(t("newUser.passwordChanged"));
+      closeChangePassword();
+    } catch (error) {
+      setPwOtpError(
         error instanceof ApiError && error.serverKey
           ? t(error.serverKey, error.serverParams ?? undefined)
           : t("error.requestFailed", { status: "?" })
@@ -317,11 +366,14 @@ const UserEdit = () => {
                 </Button>
               </div>
 
-              {showChangePassword && (
+              {showChangePassword && pwOtpStep === "form" && (
                 <div className="mt-6 rounded-md border p-4">
                   <h2 className="mb-3 text-lg font-semibold text-foreground">
                     {t("newUser.changePassword")}
                   </h2>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    {t("userEdit.passwordOtpNote")}
+                  </p>
                   <div className="space-y-4">
                     <div>
                       <label htmlFor="user-new-password" className={labelClass}>
@@ -379,17 +431,29 @@ const UserEdit = () => {
                         type="button"
                         variant="outline"
                         disabled={busy}
-                        onClick={() => {
-                          setShowChangePassword(false);
-                          setNewPassword("");
-                          setNewPasswordVerify("");
-                          setPasswordErrors({});
-                        }}
+                        onClick={closeChangePassword}
                       >
                         {t("newUser.cancel")}
                       </Button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {showChangePassword && pwOtpStep === "otp" && (
+                <div className="mt-6 rounded-md border p-4">
+                  <h2 className="mb-3 text-lg font-semibold text-foreground">
+                    {t("userEdit.passwordOtpTitle")}
+                  </h2>
+                  <OtpStep
+                    info={t("userEdit.otpSentToUser", { email: pwSentTo || user.email })}
+                    delivery={pwDelivery}
+                    demoOtp={pwDemoOtp}
+                    error={pwOtpError}
+                    confirmLabel={t("userEdit.confirmOtp")}
+                    onConfirm={handleConfirmPasswordOtp}
+                    onCancel={() => setPwOtpStep("form")}
+                  />
                 </div>
               )}
             </>

@@ -20,12 +20,21 @@ enumeration).
 
 import bcrypt
 import json
+import re
 import secrets
+import smtplib
 import time
+
+from email.message import EmailMessage
 
 WRONG_CREDENTIALS = "wrong credentials"
 OTP_MAX_ATTEMPTS = 5
 SYSADMIN_GROUP = "SysAdmin"
+
+# SMTP transport for the real OTP email delivery (Security Settings page).
+SMTP_TIMEOUT_SECONDS = 15
+EMAIL_FIELD_MAX_LEN = 255
+EMAIL_ADDRESS_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # Administrator-configurable security policy bounds (Security Settings page).
 MIN_PASSWORD_LENGTH_MIN = 1
@@ -118,6 +127,18 @@ def parse_bool(value):
         if lowered in ("false", "0"):
             return False
     return None
+
+
+def _setting_value(cur, key):
+    """Raw string value of one settings row ("" when missing)."""
+    cur.execute(
+        'SELECT value FROM "MiniPLM"."settings" WHERE key = %s',
+        (key,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return ""
+    return str(row[0] or "").strip()
 
 
 def get_security_policy(cur):
@@ -324,13 +345,98 @@ def public_user(user):
     }
 
 
+def get_email_settings(cur):
+    """SMTP configuration for the real OTP email delivery.
+
+    Returns None when the transport is not fully configured (missing
+    host, port or sender address): login then falls back to the demo
+    delivery (the code is returned to the UI as ``demoOtp``).
+    """
+    host = _setting_value(cur, "email_smtp_host")
+    port_raw = _setting_value(cur, "email_smtp_port")
+    from_address = _setting_value(cur, "email_from_address")
+    if not host or not port_raw or not from_address:
+        return None
+    try:
+        port = int(port_raw)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return {
+        "host": host,
+        "port": port,
+        "username": _setting_value(cur, "email_smtp_username"),
+        "password": _setting_value(cur, "email_smtp_password"),
+        "useTls": _setting_value(cur, "email_smtp_use_tls").lower() == "true",
+        "from": from_address,
+    }
+
+
+def email_settings_payload(cur):
+    """Email settings for the Security Settings page (never includes the
+    SMTP password itself, only whether one is stored)."""
+    host = _setting_value(cur, "email_smtp_host")
+    from_address = _setting_value(cur, "email_from_address")
+    port_raw = _setting_value(cur, "email_smtp_port")
+    try:
+        port = int(port_raw) if port_raw else None
+    except (TypeError, ValueError):
+        port = None
+    configured = bool(host and port and from_address)
+    return {
+        "smtpHost": host,
+        "smtpPort": port,
+        "smtpUsername": _setting_value(cur, "email_smtp_username"),
+        "useTls": _setting_value(cur, "email_smtp_use_tls").lower() == "true",
+        "fromAddress": from_address,
+        "passwordConfigured": bool(_setting_value(cur, "email_smtp_password")),
+        "configured": configured,
+    }
+
+
+def send_otp_email(settings, to_address, code, ttl_seconds):
+    """Send the OTP code to ``to_address`` through the configured SMTP.
+
+    Raises on any transport failure; the caller maps it to the generic
+    ``auth.error.emailNotSent`` result so infrastructure details never
+    reach an unauthenticated caller.
+    """
+    msg = EmailMessage()
+    msg["From"] = settings["from"]
+    msg["To"] = to_address
+    msg["Subject"] = "MiniPLM - one-time login code"
+    minutes = max(1, ttl_seconds // 60)
+    msg.set_content(
+        "Your MiniPLM one-time login code is: "
+        f"{code}\n\n"
+        f"The code expires in about {minutes} minute(s).\n"
+        "If you did not request this code, you can safely ignore this email.\n"
+    )
+
+    server = smtplib.SMTP(
+        settings["host"], settings["port"], timeout=SMTP_TIMEOUT_SECONDS
+    )
+    try:
+        if settings["useTls"]:
+            server.starttls()
+        if settings["username"]:
+            server.login(settings["username"], settings["password"])
+        server.send_message(msg)
+    finally:
+        try:
+            server.quit()
+        except Exception:
+            pass
+
+
 def issue_otp(ctx, cur, login_name):
     ttl = max(60, get_setting(cur, "otp_ttl_seconds", 300))
     code = "".join(secrets.choice("0123456789") for _ in range(6))
     now = int(time.time())
     record = json.dumps({"code": code, "expiresAt": now + ttl, "attempts": 0})
     ctx.REDIS.set(redis_key(ctx, f"auth:otp:{login_name}"), record, ex=ttl)
-    return code
+    return code, ttl
 
 
 def consume_otp(ctx, data):
@@ -445,22 +551,30 @@ def do_login(ctx, cur, data):
     if not ok:
         return wrong()
 
-    code = issue_otp(ctx, cur, login_name)
+    code, ttl = issue_otp(ctx, cur, login_name)
 
-    cur.execute(
-        "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
-        ("email_provider",),
-    )
-    row = cur.fetchone()
-    provider = (row[0] if row else "none") or "none"
-
-    payload = {"ok": True, "sent": True, "delivery": "email" if provider != "none" else "dev"}
-    if provider == "none":
+    email_settings = get_email_settings(cur)
+    if email_settings is None:
         # No email transport is configured in this environment: expose the
-        # code so the OTP flow can be completed and tested.
-        payload["demoOtp"] = code
-        payload["email"] = user["email"]
-    return payload
+        # code so the OTP flow can be completed and tested (demo mode).
+        return {
+            "ok": True,
+            "sent": True,
+            "delivery": "dev",
+            "demoOtp": code,
+            "email": user["email"],
+        }
+
+    # Real delivery: the code goes to the user's mailbox, never to the UI.
+    to_address = str(user["email"] or "").strip()
+    if not to_address:
+        return fail("auth.error.emailNotSent")
+    try:
+        send_otp_email(email_settings, to_address, code, ttl)
+    except Exception as exc:
+        print(f"[smtp] OTP email to {to_address} failed: {exc}")
+        return fail("auth.error.emailNotSent")
+    return {"ok": True, "sent": True, "delivery": "email", "email": to_address}
 
 
 def do_verify_otp(ctx, args, data):
@@ -593,20 +707,96 @@ def do_get_settings(ctx, args):
         duration_hours = get_setting(cur, "session_duration_hours", 6)
         warning_minutes = get_setting(cur, "session_warning_minutes", 10)
         otp_ttl = get_setting(cur, "otp_ttl_seconds", 300)
-        cur.execute(
-            "SELECT value FROM \"MiniPLM\".\"settings\" WHERE key = %s",
-            ("email_provider",),
-        )
-        row = cur.fetchone()
-        provider = (row[0] if row else "none") or "none"
+        email_payload = email_settings_payload(cur)
         policy = get_security_policy(cur)
     return {
         "ok": True,
         "sessionDurationHours": duration_hours,
         "sessionWarningMinutes": warning_minutes,
         "otpTtlSeconds": otp_ttl,
-        "emailProvider": provider,
+        "email": email_payload,
         **policy,
+    }
+
+
+def do_update_email_settings(ctx, args, data):
+    """Administrator-managed SMTP settings (Security Settings page).
+
+    An empty host disables the email transport (all the other values are
+    cleared and login falls back to the demo delivery). The API never
+    returns the stored SMTP password: an empty submission keeps the
+    previously stored one, while a non-empty one replaces it.
+    """
+    session, error = require_session(ctx, args)
+    if error is not None:
+        return error
+    if not require_csrf(ctx, args, session):
+        return fail("csrf")
+
+    host = str(data.get("smtpHost") or "").strip()
+    from_address = str(data.get("fromAddress") or "").strip()
+    username = str(data.get("smtpUsername") or "").strip()
+    password = data.get("smtpPassword")
+    password = str(password).strip() if password is not None else ""
+    use_tls = parse_bool(data.get("useTls"))
+    if use_tls is None:
+        return fail("auth.error.invalidEmailSettings")
+
+    if host:
+        if (
+            len(host) > EMAIL_FIELD_MAX_LEN
+            or len(username) > EMAIL_FIELD_MAX_LEN
+            or len(from_address) > EMAIL_FIELD_MAX_LEN
+        ):
+            return fail("auth.error.invalidEmailSettings")
+        try:
+            port = int(data.get("smtpPort"))
+        except (TypeError, ValueError):
+            return fail("auth.error.invalidEmailSettings")
+        if not 1 <= port <= 65535:
+            return fail("auth.error.invalidEmailSettings")
+        if not EMAIL_ADDRESS_RE.match(from_address):
+            return fail("auth.error.invalidEmailSettings")
+    else:
+        # Disabling the email transport: clear all the SMTP values.
+        port = 0
+        username = ""
+        from_address = ""
+        password = ""
+        use_tls = False
+
+    with ctx.POSTGRESQL.cursor() as cur:
+        if not user_is_sysadmin(cur, session.get("userId")):
+            return fail("forbidden")
+        for key, value in (
+            ("email_smtp_host", host),
+            ("email_smtp_port", str(port)),
+            ("email_smtp_username", username),
+            ("email_smtp_use_tls", "true" if use_tls else "false"),
+            ("email_from_address", from_address),
+        ):
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                (key, value, value),
+            )
+        if password:
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                ("email_smtp_password", password, password),
+            )
+        elif not host:
+            cur.execute(
+                'INSERT INTO "MiniPLM"."settings" (key, value) VALUES (%s, %s)'
+                " ON CONFLICT (key) DO UPDATE SET value = %s",
+                ("email_smtp_password", "", ""),
+            )
+    ctx.POSTGRESQL.commit()
+    return {
+        "ok": True,
+        "configured": bool(host and port and from_address),
+        "passwordUpdated": bool(password and host),
     }
 
 
@@ -782,6 +972,8 @@ def main(args, ctx=None):
             return do_get_settings(ctx, args)
         if operation in ("update-session-settings", "updatesettings"):
             return do_update_session_settings(ctx, args, data)
+        if operation in ("update-email-settings", "updateemailsettings"):
+            return do_update_email_settings(ctx, args, data)
         if operation in ("update-password-policy", "updatepasswordpolicy"):
             return do_update_password_policy(ctx, args, data)
         if operation in ("update-login-policy", "updateloginpolicy"):

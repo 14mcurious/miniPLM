@@ -8,6 +8,17 @@ import { api, ApiError } from "@/lib/api";
 
 const AUTH_ENDPOINT = "/api/my/v1/auth";
 
+interface EmailSettingsPayload {
+  smtpHost: string;
+  smtpPort: number | null;
+  smtpUsername: string;
+  useTls: boolean;
+  fromAddress: string;
+  passwordConfigured: boolean;
+  /** True when host, port and From are all set (real email delivery). */
+  configured: boolean;
+}
+
 interface SecuritySettingsPayload {
   sessionDurationHours: number;
   sessionWarningMinutes: number;
@@ -19,12 +30,16 @@ interface SecuritySettingsPayload {
   loginNameAlnumOnly: boolean;
   loginNameMinLength: number;
   loginNameMaxLength: number;
+  email: EmailSettingsPayload;
 }
 
 const PASSWORD_LENGTH_MIN = 1;
 const PASSWORD_LENGTH_MAX = 64;
 const LOGIN_LENGTH_MIN = 1;
 const LOGIN_LENGTH_MAX = 64;
+const EMAIL_PORT_MIN = 1;
+const EMAIL_PORT_MAX = 65535;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 type Banner = {
   key: string;
@@ -67,6 +82,19 @@ const SecuritySettings = () => {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBanner, setLoginBanner] = useState<Banner>(null);
 
+  // Email (SMTP) delivery of the OTP code.
+  const [smtpHost, setSmtpHost] = useState<string>("");
+  const [smtpPort, setSmtpPort] = useState<string>("");
+  const [smtpUsername, setSmtpUsername] = useState<string>("");
+  const [smtpPassword, setSmtpPassword] = useState<string>("");
+  const [fromAddress, setFromAddress] = useState<string>("");
+  const [useTls, setUseTls] = useState(false);
+  const [emailConfigured, setEmailConfigured] = useState(false);
+  const [emailPasswordConfigured, setEmailPasswordConfigured] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailBanner, setEmailBanner] = useState<Banner>(null);
+
   const translate = (err: unknown, fallbackStatus = "?"): string => {
     if (err instanceof ApiError && err.serverKey) {
       return t(err.serverKey, err.serverParams ?? undefined);
@@ -96,12 +124,76 @@ const SecuritySettings = () => {
         setLoginAlnumOnly(data.loginNameAlnumOnly);
         setLoginMinLength(String(data.loginNameMinLength));
         setLoginMaxLength(String(data.loginNameMaxLength));
+        setSmtpHost(data.email?.smtpHost ?? "");
+        setSmtpPort(data.email?.smtpPort != null ? String(data.email.smtpPort) : "");
+        setSmtpUsername(data.email?.smtpUsername ?? "");
+        setFromAddress(data.email?.fromAddress ?? "");
+        setUseTls(data.email?.useTls ?? false);
+        setEmailConfigured(data.email?.configured ?? false);
+        setEmailPasswordConfigured(data.email?.passwordConfigured ?? false);
       })
       .catch(() => {
         // leave the fields empty; saving will surface the server error
       })
       .finally(() => setLoading(false));
   }, []);
+
+  const validateEmailSettings = (): string | null => {
+    const host = smtpHost.trim();
+    if (!host) return null; // disabling the transport: nothing else to check
+    const port = Number(smtpPort);
+    if (
+      !/^\d+$/.test(smtpPort.trim()) ||
+      port < EMAIL_PORT_MIN ||
+      port > EMAIL_PORT_MAX ||
+      !EMAIL_RE.test(fromAddress?.trim() ?? "")
+    ) {
+      return "auth.error.invalidEmailSettings";
+    }
+    return null;
+  };
+
+  const handleSaveEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingEmail) return;
+    const error = validateEmailSettings();
+    setEmailError(error);
+    setEmailBanner(null);
+    if (error) return;
+
+    const host = smtpHost.trim();
+    setSavingEmail(true);
+    try {
+      const result = await api<{
+        configured: boolean;
+        passwordUpdated: boolean;
+      }>(AUTH_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({
+          operation: "update-email-settings",
+          smtpHost: host,
+          smtpPort: host ? Number(smtpPort) : 0,
+          smtpUsername: smtpUsername.trim(),
+          smtpPassword: smtpPassword,
+          useTls,
+          fromAddress: (fromAddress ?? "").trim(),
+        }),
+      });
+      setEmailConfigured(result.configured);
+      // Empty password input: the server kept the stored one (or cleared it
+      // when the transport was disabled); a non-empty one was stored now.
+      setEmailPasswordConfigured(
+        smtpPassword ? true : result.passwordUpdated || emailPasswordConfigured
+      );
+      setSmtpPassword("");
+      toast.success(t("configuration.saved"));
+    } catch (err) {
+      setEmailBanner(bannerFromError(err));
+      toast.error(translate(err));
+    } finally {
+      setSavingEmail(false);
+    }
+  };
 
   const validateSession = (): string | null => {
     const hours = Number(sessionHours);
@@ -353,6 +445,160 @@ const SecuritySettings = () => {
                 type="submit"
                 disabled={savingSession}
                 aria-busy={savingSession}
+              >
+                {t("configuration.save")}
+              </Button>
+            </div>
+          </form>
+
+          {/* Email (SMTP) delivery of the OTP code */}
+          <form
+            onSubmit={handleSaveEmail}
+            noValidate
+            className="space-y-4 rounded-lg border bg-card p-5 shadow-sm"
+          >
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">
+                {t("securitySettings.emailTitle")}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("securitySettings.emailDescription")}
+              </p>
+            </div>
+            {renderBanner(emailBanner)}
+            <div
+              className={
+                "rounded-md border px-4 py-3 text-sm " +
+                (emailConfigured
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300")
+              }
+            >
+              {emailConfigured
+                ? t("securitySettings.emailConfigured")
+                : t("securitySettings.emailNotConfigured")}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="smtp-host" className={labelClass}>
+                  {t("securitySettings.emailHost")}
+                </label>
+                <Input
+                  id="smtp-host"
+                  name="smtpHost"
+                  type="text"
+                  autoComplete="off"
+                  value={smtpHost}
+                  onChange={(e) => {
+                    setSmtpHost(e.target.value);
+                    setEmailError(null);
+                  }}
+                  disabled={savingEmail}
+                  className="w-full"
+                />
+                <p className={hintClass}>{t("securitySettings.emailHostHint")}</p>
+              </div>
+              <div>
+                <label htmlFor="smtp-port" className={labelClass}>
+                  {t("securitySettings.emailPort")}
+                </label>
+                <Input
+                  id="smtp-port"
+                  name="smtpPort"
+                  type="number"
+                  min={EMAIL_PORT_MIN}
+                  max={EMAIL_PORT_MAX}
+                  value={smtpPort}
+                  onChange={(e) => {
+                    setSmtpPort(e.target.value);
+                    setEmailError(null);
+                  }}
+                  disabled={savingEmail}
+                  className={fieldClass}
+                />
+                <p className={hintClass}>{t("securitySettings.emailPortHint")}</p>
+              </div>
+              <div>
+                <label htmlFor="smtp-username" className={labelClass}>
+                  {t("securitySettings.emailUsername")}
+                </label>
+                <Input
+                  id="smtp-username"
+                  name="smtpUsername"
+                  type="text"
+                  autoComplete="off"
+                  value={smtpUsername}
+                  onChange={(e) => {
+                    setSmtpUsername(e.target.value);
+                    setEmailError(null);
+                  }}
+                  disabled={savingEmail}
+                  className="w-full"
+                />
+                <p className={hintClass}>{t("securitySettings.emailUsernameHint")}</p>
+              </div>
+              <div>
+                <label htmlFor="smtp-password" className={labelClass}>
+                  {t("securitySettings.emailPassword")}
+                </label>
+                <Input
+                  id="smtp-password"
+                  name="smtpPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  value={smtpPassword}
+                  onChange={(e) => {
+                    setSmtpPassword(e.target.value);
+                    setEmailError(null);
+                  }}
+                  disabled={savingEmail}
+                  className="w-full"
+                />
+                <p className={hintClass}>{t("securitySettings.emailPasswordHint")}</p>
+              </div>
+              <div>
+                <label htmlFor="smtp-from" className={labelClass}>
+                  {t("securitySettings.emailFrom")}
+                </label>
+                <Input
+                  id="smtp-from"
+                  name="fromAddress"
+                  type="email"
+                  autoComplete="off"
+                  value={fromAddress}
+                  onChange={(e) => {
+                    setFromAddress(e.target.value);
+                    setEmailError(null);
+                  }}
+                  disabled={savingEmail}
+                  className="w-full"
+                />
+                <p className={hintClass}>{t("securitySettings.emailFromHint")}</p>
+              </div>
+              <div className="sm:pt-7">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="smtp-use-tls"
+                    name="useTls"
+                    type="checkbox"
+                    checked={useTls}
+                    onChange={(e) => setUseTls(e.target.checked)}
+                    disabled={savingEmail}
+                    className={checkboxClass}
+                  />
+                  <label htmlFor="smtp-use-tls" className={checkboxLabelClass}>
+                    {t("securitySettings.emailUseTls")}
+                  </label>
+                </div>
+                <p className={hintClass}>{t("securitySettings.emailUseTlsHint")}</p>
+              </div>
+            </div>
+            {emailError && <p className={fieldErrorClass}>{t(emailError)}</p>}
+            <div className="border-t pt-4">
+              <Button
+                type="submit"
+                disabled={savingEmail}
+                aria-busy={savingEmail}
               >
                 {t("configuration.save")}
               </Button>

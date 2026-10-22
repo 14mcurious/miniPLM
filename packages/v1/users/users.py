@@ -1,7 +1,10 @@
 import bcrypt
 import json
 import re
+import secrets
 import time
+
+import otp_email
 
 DEFAULT_MIN_PASSWORD_LENGTH = 12
 DEFAULT_LOGIN_NAME_MIN_LENGTH = 3
@@ -521,7 +524,15 @@ def set_disabled(conn, data, resource_name):
     return {"ok": True, "user": user_to_dict(row)}
 
 
-def change_password(conn, data, resource_name):
+def change_password(conn, data, ctx, resource_name):
+    """Stage an admin-initiated password change (OTP confirmation).
+
+    The administrator does NOT know the user's current password (the
+    whole point of this flow: the user forgot it). The new password is
+    validated, a one-time code is sent to the user's CURRENT email and
+    the hashed new password is staged in Redis. The change is applied
+    only by ``confirm-change-password`` with the right code.
+    """
     user_id = request_route_id(data if isinstance(data, dict) else {}, data, resource_name)
     try:
         user_id = int(user_id)
@@ -535,8 +546,10 @@ def change_password(conn, data, resource_name):
             f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
             (user_id,),
         )
-        if not cur.fetchone():
+        row = cur.fetchone()
+        if not row:
             return fail("users.error.userNotFound")
+        user = user_to_dict(row)
         policy = get_security_policy(cur)
         password_error, error_params = validate_password(password, policy)
         if password_error:
@@ -544,10 +557,71 @@ def change_password(conn, data, resource_name):
         password_hash = bcrypt.hashpw(
             password.encode("utf-8"), bcrypt.gensalt(rounds=10)
         ).decode("utf-8")
+        code, ttl = otp_email.issue_otp(ctx, cur, user_id, password_hash)
+        email_settings = otp_email.get_email_settings(cur)
+
+    to_address = str(user["email"] or "").strip()
+    if email_settings is None or not to_address:
+        # Demo delivery: no SMTP transport configured (or no mailbox):
+        # expose the code so the flow can be completed and tested.
+        return {
+            "ok": True,
+            "delivery": "dev",
+            "demoOtp": code,
+            "email": to_address,
+        }
+    try:
+        otp_email.send_otp_email(
+            email_settings,
+            to_address,
+            code,
+            ttl,
+            "MiniPLM - one-time password confirmation code",
+        )
+    except Exception as exc:
+        print(f"[smtp] admin password OTP to {to_address} failed: {exc}")
+        return fail("profile.error.emailNotSent")
+    return {"ok": True, "delivery": "email", "email": to_address}
+
+
+def confirm_change_password(conn, data, ctx, resource_name):
+    """Apply the staged admin password change after OTP verification.
+
+    The re-sent password is checked against the hash staged at
+    ``change-password`` time (bcrypt check, constant-time), so the code
+    can only confirm the exact password the administrator proposed.
+    """
+    user_id = request_route_id(data if isinstance(data, dict) else {}, data, resource_name)
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return fail("users.error.userNotFound")
+    password = data.get("password")
+    if not password:
+        return fail("users.error.passwordRequired")
+
+    ok, staged_hash = otp_email.consume_otp(ctx, user_id, data.get("otp"))
+    if not ok:
+        return fail("profile.error.otpInvalid")
+    try:
+        match = bcrypt.checkpw(
+            password.encode("utf-8"), str(staged_hash or "").encode("utf-8")
+        )
+    except Exception:
+        match = False
+    if not match:
+        return fail("profile.error.passwordMismatch")
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
+            (user_id,),
+        )
+        if not cur.fetchone():
+            return fail("users.error.userNotFound")
         cur.execute(
             'UPDATE "MiniPLM"."users" SET password_hash = %s, updated_at = now()'
             " WHERE id = %s",
-            (password_hash, user_id),
+            (str(staged_hash), user_id),
         )
         cur.execute(
             f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
@@ -588,6 +662,8 @@ def main(args, ctx=None):
             "enable",
             "change-password",
             "changepassword",
+            "confirm-change-password",
+            "confirmchangepassword",
         )
         if mutating and not require_csrf(ctx, args, session):
             return fail("csrf")
@@ -601,7 +677,9 @@ def main(args, ctx=None):
             data["disabled"] = operation == "disable"
             return set_disabled(conn, data, "user")
         if operation in ("change-password", "changepassword"):
-            return change_password(conn, data, "user")
+            return change_password(conn, data, ctx, "user")
+        if operation in ("confirm-change-password", "confirmchangepassword"):
+            return confirm_change_password(conn, data, ctx, "user")
         return fail("users.error.request")
     except Exception as exc:
         try:

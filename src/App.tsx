@@ -44,6 +44,7 @@ import WorkflowProgressTypeEdit from "./pages/WorkflowProgressTypeEdit";
 import SearchColumnsConfiguration from "./pages/SearchColumnsConfiguration";
 import SecuritySettings from "./pages/SecuritySettings";
 import ProjectSettings from "./pages/ProjectSettings";
+import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -85,6 +86,15 @@ const App = () => (
                 element={
                   <RequireAuth>
                     <Home />
+                  </RequireAuth>
+                }
+              />
+
+              <Route
+                path="/profile"
+                element={
+                  <RequireAuth>
+                    <Profile />
                   </RequireAuth>
                 }
               />

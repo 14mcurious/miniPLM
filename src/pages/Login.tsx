@@ -33,10 +33,11 @@ const Login = () => {
 
   const showServerError = (err: unknown): string => {
     if (err instanceof ApiError && err.serverKey) {
-      // Authentication failures always surface the exact same message:
-      // "wrong credentials" (returned verbatim by the backend).
+      // "wrong credentials" is returned verbatim by the backend and has a
+      // matching i18n entry; other server keys (e.g. the OTP email delivery
+      // failure) are translated through the catalog.
       if (err.serverKey === "forbidden") return t("access.forbidden");
-      return err.serverKey;
+      return t(err.serverKey, err.serverParams ?? undefined);
     }
     return t("error.requestFailed", { status: "?" });
   };

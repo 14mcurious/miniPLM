@@ -181,6 +181,7 @@ export const FIELD_TYPES = [
   "string",
   "attachment",
   "html",
+  "md",
   "xml",
   "custom",
 ] as const;
@@ -191,6 +192,7 @@ export const FIELD_TYPE_KEYS: Record<string, string> = {
   string: "fieldType.string",
   attachment: "fieldType.attachment",
   html: "fieldType.html",
+  md: "fieldType.md",
   xml: "fieldType.xml",
   custom: "fieldType.custom",
 };

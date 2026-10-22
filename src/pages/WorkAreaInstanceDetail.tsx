@@ -7,6 +7,7 @@ import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
+import MarkdownView from "@/components/MarkdownView";
 import { Button } from "@/components/ui/button";
 import {
   AttachmentValue,
@@ -164,6 +165,13 @@ const WorkAreaInstanceDetail = () => {
         <pre className="overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-xs text-foreground">
           {String(value)}
         </pre>
+      );
+    }
+    if (field.type === "md") {
+      return (
+        <div className="rounded-md border bg-muted/30 p-3">
+          <MarkdownView source={String(value)} />
+        </div>
       );
     }
     if (Array.isArray(value)) {

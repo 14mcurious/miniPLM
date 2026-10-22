@@ -20,6 +20,7 @@ export const AD_HOC_TYPES = [
   "date",
   "string",
   "html",
+  "md",
   "xml",
   "custom",
 ];

@@ -1,5 +1,6 @@
 import { useI18n } from "@/i18n";
 import { Input } from "@/components/ui/input";
+import MarkdownEditor from "@/components/MarkdownEditor";
 import type { AttachmentValue, CustomType, FieldDef } from "@/lib/types";
 import { downloadAttachment } from "@/lib/work-instance-form";
 import type { FieldEditorProps } from "@/lib/work-instance-form";
@@ -67,6 +68,16 @@ const FieldEditor = ({
         className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ${
           def.type === "xml" ? "font-mono" : ""
         }`}
+      />
+    );
+  } else if (def.type === "md") {
+    control = (
+      <MarkdownEditor
+        id={id}
+        name={id}
+        value={String(value ?? "")}
+        disabled={busy}
+        onChange={(next) => onChange(next)}
       />
     );
   } else if (def.type === "attachment") {

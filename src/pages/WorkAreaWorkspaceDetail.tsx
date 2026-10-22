@@ -411,7 +411,8 @@ const WorkAreaWorkspaceDetail = () => {
                             fieldValues: containerFieldValues,
                             adHoc: containerAdHoc,
                           },
-                          containerTemplate
+                          containerTemplate,
+                          t
                         );
                         if (fieldsError) {
                           setFormError(translate(fieldsError));

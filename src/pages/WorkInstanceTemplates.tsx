@@ -17,7 +17,7 @@ const TEMPLATES_ENDPOINT = "/api/my/v1/templates";
 const WORK_AREAS_ENDPOINT = "/api/my/v1/work-areas";
 const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
 
-const ALL_TYPES = ["number", "date", "string", "attachment", "html", "xml", "custom"];
+const ALL_TYPES = ["number", "date", "string", "attachment", "html", "md", "xml", "custom"];
 
 interface ProjectRef {
   id: number;
@@ -519,7 +519,9 @@ const WorkInstanceTemplates = () => {
                         .join(", ") || "—"}
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
-                      {template.progressWorkflow?.name ?? "—"}
+                      {template.definition.find(
+                        (def) => def.type === "progress"
+                      )?.customType ?? "—"}
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {template.usedByCount}

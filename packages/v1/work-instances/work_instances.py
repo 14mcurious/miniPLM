@@ -6,8 +6,8 @@ the template lists the allowed fields (name, type, optional description,
 and the referenced custom type for custom-type fields).
 
 Instance fields support these types:
-  number, date, string, attachment (S3 object reference), html, xml,
-  custom (value(s) of a configured custom type).
+  number, date, string, attachment (S3 object reference), html, md
+  (markdown), xml, custom (value(s) of a configured custom type).
 
 Progress is a template field: when the instance's template includes a
 progress field, its value is validated against the workflow progress type
@@ -24,7 +24,7 @@ import time
 import xml.etree.ElementTree as ElementTree
 
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
-ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom")
+ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "md", "xml", "custom")
 DATE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$"
 )
@@ -343,7 +343,7 @@ def validate_field_value(field_type, value, custom_type):
         if not isinstance(value, str) or not DATE_RE.match(value.strip()):
             return "workInstances.error.fieldType"
         return None
-    if field_type in ("string", "html"):
+    if field_type in ("string", "html", "md"):
         if not isinstance(value, str):
             return "workInstances.error.fieldType"
         return None

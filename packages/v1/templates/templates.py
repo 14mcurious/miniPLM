@@ -2,8 +2,8 @@
 
 A template belongs to a project (work area) and defines, as JSON, the
 fields a work instance can carry: field name, field type (number, date,
-string, attachment, html, xml, custom) and an optional description; for
-custom fields the referenced custom type name.
+string, attachment, html, md (markdown), xml, custom) and an optional
+description; for custom fields the referenced custom type name.
 
 Access: valid Redis session + enabled group attached to the project.
 Modes: read (any), create C, update U, delete D.
@@ -15,7 +15,7 @@ import time
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
-ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "xml", "custom", "progress")
+ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "md", "xml", "custom", "progress")
 
 
 def redis_key(ctx, name):

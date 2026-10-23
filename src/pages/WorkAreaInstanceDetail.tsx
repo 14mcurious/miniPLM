@@ -7,48 +7,22 @@ import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
-import MarkdownView from "@/components/MarkdownView";
+import FieldValue from "@/components/FieldValue";
 import { Button } from "@/components/ui/button";
 import {
-  AttachmentValue,
   UserRef,
   WorkContainer,
   WorkInstance,
-  WorkInstanceField,
 } from "@/lib/types";
 
 const INSTANCES_ENDPOINT = "/api/my/v1/work-instances";
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
-const ATTACHMENTS_ENDPOINT = "/api/my/v1/attachments";
 
 const formatDate = (value: string | null): string =>
   value ? new Date(value).toLocaleString() : "—";
 
 const formatUser = (user: UserRef | null): string =>
   user ? `${user.name} ${user.surname}` : "—";
-
-async function downloadAttachment(s3Key: string): Promise<void> {
-  const data = await api<{ attachment: { fileName: string; content: string } }>(
-    ATTACHMENTS_ENDPOINT,
-    {
-      method: "POST",
-      body: JSON.stringify({ operation: "download", s3Key }),
-    }
-  );
-  const byteChars = atob(data.attachment.content);
-  const bytes = new Uint8Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i += 1) {
-    bytes[i] = byteChars.charCodeAt(i);
-  }
-  const url = URL.createObjectURL(new Blob([bytes]));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = data.attachment.fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
 
 /**
  * Work instance detail: all attributes and the typed fields (number,
@@ -133,63 +107,6 @@ const WorkAreaInstanceDetail = () => {
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
   const base = `/work-area/${projectId}`;
-
-  const renderFieldValue = (field: WorkInstanceField) => {
-    const value = field.value;
-    if (value === null || value === undefined || value === "") {
-      return <span className="text-muted-foreground">—</span>;
-    }
-    if (field.type === "attachment" && typeof value === "object") {
-      const attachment = value as AttachmentValue;
-      return (
-        <button
-          type="button"
-          className="text-sm text-primary hover:underline"
-          onClick={() => void downloadAttachment(attachment.s3Key)}
-        >
-          {attachment.fileName} ({Math.round(attachment.size / 1024)} KB)
-        </button>
-      );
-    }
-    if (field.type === "html") {
-      return (
-        <div
-          className="prose prose-sm max-w-none rounded-md border bg-muted/30 p-3 text-sm text-foreground"
-          // HTML authored by the same project members; rendered as-is.
-          dangerouslySetInnerHTML={{ __html: String(value) }}
-        />
-      );
-    }
-    if (field.type === "xml") {
-      return (
-        <pre className="overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-xs text-foreground">
-          {String(value)}
-        </pre>
-      );
-    }
-    if (field.type === "md") {
-      return (
-        <div className="rounded-md border bg-muted/30 p-3">
-          <MarkdownView source={String(value)} />
-        </div>
-      );
-    }
-    if (Array.isArray(value)) {
-      return (
-        <span className="flex flex-wrap gap-1">
-          {value.map((item, index) => (
-            <span
-              key={index}
-              className="rounded-full bg-muted px-2 py-0.5 text-xs text-foreground"
-            >
-              {String(item)}
-            </span>
-          ))}
-        </span>
-      );
-    }
-    return <span>{String(value)}</span>;
-  };
 
   return (
     <>
@@ -339,7 +256,7 @@ const WorkAreaInstanceDetail = () => {
                           {field.description}
                         </p>
                       )}
-                      {renderFieldValue(field)}
+                      <FieldValue field={field} />
                     </div>
                   ))}
                 </div>

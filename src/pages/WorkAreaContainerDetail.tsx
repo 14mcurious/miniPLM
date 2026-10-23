@@ -6,12 +6,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
+import FieldValue from "@/components/FieldValue";
 import {
   HistoryEntry,
   UserRef,
   WorkContainer,
   WorkInstance,
-  WorkInstanceField,
 } from "@/lib/types";
 
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
@@ -22,18 +22,6 @@ const formatUser = (user: UserRef | null): string =>
 
 const formatDate = (value: string | null): string =>
   value ? new Date(value).toLocaleString() : "—";
-
-const formatFieldValue = (field: WorkInstanceField): string => {
-  if (field.value == null) return "—";
-  if (typeof field.value === "boolean") return field.value ? "Yes" : "No";
-  if (Array.isArray(field.value)) return "[attachment]";
-  if (typeof field.value === "object") {
-    const attachment = field.value as { url?: string; fileName?: string };
-    return attachment.url || attachment.fileName || "[attachment]";
-  }
-  const text = String(field.value);
-  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
-};
 
 /**
  * Work container detail: all attributes, the template fields, the
@@ -241,8 +229,8 @@ const WorkAreaContainerDetail = () => {
                           <dt className="text-xs text-muted-foreground">
                             {field.name}
                           </dt>
-                          <dd className="mt-1 break-words text-sm font-medium text-foreground">
-                            {formatFieldValue(field)}
+                          <dd className="mt-1 text-sm text-foreground">
+                            <FieldValue field={field} />
                           </dd>
                         </div>
                       ))}

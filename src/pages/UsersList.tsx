@@ -26,6 +26,7 @@ interface UserRow {
   isDisabled: boolean;
   groups: UserGroup[];
   projects: ProjectRef[];
+  roles: ProjectRef[];
 }
 
 const UsersList = () => {
@@ -69,6 +70,8 @@ const UsersList = () => {
       if (user.groups.some((g) => g.name.toLowerCase().includes(needle)))
         return true;
       if (user.projects.some((p) => p.name.toLowerCase().includes(needle)))
+        return true;
+      if (user.roles.some((r) => r.name.toLowerCase().includes(needle)))
         return true;
       return false;
     });
@@ -131,6 +134,9 @@ const UsersList = () => {
                       {t("usersList.groups")}
                     </th>
                     <th className="px-3 py-2 font-medium">
+                      {t("usersList.roles")}
+                    </th>
+                    <th className="px-3 py-2 font-medium">
                       {t("usersList.projects")}
                     </th>
                   </tr>
@@ -139,7 +145,7 @@ const UsersList = () => {
                   {visibleUsers.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={3}
+                        colSpan={4}
                         className="px-3 py-4 text-muted-foreground"
                       >
                         {t("usersList.noMatches")}
@@ -176,6 +182,21 @@ const UsersList = () => {
                                   >
                                     {group.name}
                                   </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          {user.roles.length === 0 ? (
+                            <span className="text-muted-foreground">
+                              {dash}
+                            </span>
+                          ) : (
+                            <ul className="space-y-1">
+                              {user.roles.map((role) => (
+                                <li key={role.id} className="text-foreground">
+                                  {role.name}
                                 </li>
                               ))}
                             </ul>

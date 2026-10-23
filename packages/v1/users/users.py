@@ -287,12 +287,15 @@ USER_JOIN_SELECT = (
     "SELECT u.id, u.login_name, u.email, u.name, u.surname, u.company,"
     " u.notify_email, u.is_disabled,"
     " g.id AS group_id, g.name AS group_name, g.access_mode AS group_access_mode,"
-    " gp.project_name, p.id AS project_id"
+    " gp.project_name, p.id AS project_id,"
+    " r.id AS role_id, r.name AS role_name"
     ' FROM "MiniPLM"."users" u'
     ' LEFT JOIN "MiniPLM"."user_groups" ug ON ug.user_id = u.id'
     ' LEFT JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
     ' LEFT JOIN "MiniPLM"."group_projects" gp ON gp.group_id = g.id'
     ' LEFT JOIN "MiniPLM"."projects" p ON p.name = gp.project_name'
+    ' LEFT JOIN "MiniPLM"."user_roles" ur ON ur.user_id = u.id'
+    ' LEFT JOIN "MiniPLM"."roles" r ON r.id = ur.role_id'
 )
 
 
@@ -314,6 +317,7 @@ def fetch_users(cur, user_id=None):
             uid, login_name, email, name, surname, company,
             notify_email, is_disabled,
             group_id, group_name, access_mode, project_name, project_id,
+            role_id, role_name,
         ) = row
         entry = users.setdefault(
             uid,
@@ -328,6 +332,7 @@ def fetch_users(cur, user_id=None):
                 "isDisabled": bool(is_disabled),
                 "_groups": {},
                 "_projects": {},
+                "_roles": {},
             },
         )
         if group_id is not None:
@@ -344,6 +349,8 @@ def fetch_users(cur, user_id=None):
                 project = {"id": project_id, "name": project_name}
                 group["_projects"][project_id] = project
                 entry["_projects"][project_id] = project
+        if role_id is not None:
+            entry["_roles"][role_id] = {"id": role_id, "name": role_name}
 
     result = []
     for uid in sorted(users, key=lambda u: users[u]["loginName"].lower()):
@@ -367,6 +374,10 @@ def fetch_users(cur, user_id=None):
             (entry["_projects"][pid] for pid in entry["_projects"]),
             key=lambda p: p["name"].lower(),
         )
+        roles = sorted(
+            (entry["_roles"][rid] for rid in entry["_roles"]),
+            key=lambda r: r["name"].lower(),
+        )
         result.append(
             {
                 "id": entry["id"],
@@ -379,6 +390,7 @@ def fetch_users(cur, user_id=None):
                 "isDisabled": entry["isDisabled"],
                 "groups": groups,
                 "projects": projects,
+                "roles": roles,
             }
         )
     return result
@@ -396,6 +408,7 @@ def list_users(conn):
                 "isDisabled": u["isDisabled"],
                 "groups": u["groups"],
                 "projects": u["projects"],
+                "roles": u["roles"],
             }
             for u in users
         ],
@@ -504,24 +517,24 @@ def set_disabled(conn, data, resource_name):
         return fail("users.error.userNotFound")
     with conn.cursor() as cur:
         cur.execute(
-            f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
+            "SELECT 1 FROM \"MiniPLM\".\"users\" WHERE id = %s",
             (user_id,),
         )
-        row = cur.fetchone()
-        if not row:
+        if cur.fetchone() is None:
             return fail("users.error.userNotFound")
         cur.execute(
             'UPDATE "MiniPLM"."users" SET is_disabled = %s, updated_at = now()'
             " WHERE id = %s",
             (data.get("disabled", True), user_id),
         )
-        cur.execute(
-            f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
-            (user_id,),
-        )
-        row = cur.fetchone()
+        users = fetch_users(cur, user_id)
     conn.commit()
-    return {"ok": True, "user": user_to_dict(row)}
+    if not users:
+        return fail("users.error.userNotFound")
+    # Return the full aggregated user (groups, projects, roles) so the
+    # front end can replace its current user object without losing the
+    # related collections.
+    return {"ok": True, "user": users[0]}
 
 
 def change_password(conn, data, ctx, resource_name):
@@ -623,13 +636,14 @@ def confirm_change_password(conn, data, ctx, resource_name):
             " WHERE id = %s",
             (str(staged_hash), user_id),
         )
-        cur.execute(
-            f'SELECT {USER_COLUMNS} FROM "MiniPLM"."users" WHERE id = %s',
-            (user_id,),
-        )
-        row = cur.fetchone()
+        users = fetch_users(cur, user_id)
     conn.commit()
-    return {"ok": True, "user": user_to_dict(row)}
+    if not users:
+        return fail("users.error.userNotFound")
+    # Return the full aggregated user (groups, projects, roles) so the
+    # front end can replace its current user object without losing the
+    # related collections.
+    return {"ok": True, "user": users[0]}
 
 
 def main(args, ctx=None):

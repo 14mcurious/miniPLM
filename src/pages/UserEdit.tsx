@@ -40,6 +40,7 @@ interface UserDetails {
   isDisabled: boolean;
   groups: UserGroup[];
   projects: ProjectRef[];
+  roles: ProjectRef[];
 }
 
 const UserEdit = () => {
@@ -329,6 +330,28 @@ const UserEdit = () => {
                                 ))
                               : "—"}
                           </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      {t("usersList.none")}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <span className={labelClass}>{t("usersList.roles")}</span>
+                <div className="min-h-[3rem] rounded-md border border-input bg-muted/30 p-3">
+                  {user.roles.length > 0 ? (
+                    <ul className="flex flex-wrap gap-2">
+                      {user.roles.map((role) => (
+                        <li
+                          key={role.id}
+                          className="rounded-md border bg-background px-2 py-1 text-sm text-foreground"
+                        >
+                          {role.name}
                         </li>
                       ))}
                     </ul>

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   Bold,
   Code,
   CodeXml,
+  FileDown,
   Heading1,
   Heading2,
   Heading3,
@@ -184,6 +186,20 @@ const MarkdownEditor = ({
     });
   };
 
+  const handleExportDocx = () => {
+    // Lazy-load the DOCX toolchain only when the user exports, so the
+    // (heavy) docx package stays out of the main bundle.
+    void import("@/lib/docx-export")
+      .then(({ docxFileName, exportMarkdownToDocx }) =>
+        exportMarkdownToDocx(value, docxFileName(name))
+      )
+      .then(() => toast.success(t("md.exportDocxDone")))
+      .catch((error: unknown) => {
+        console.error("md docx export failed:", error);
+        toast.error(t("md.exportDocxError"));
+      });
+  };
+
   const actions: MarkdownActions = {
     wrap(before, after = before, placeholder = "") {
       const textarea = textareaRef.current;
@@ -298,6 +314,16 @@ const MarkdownEditor = ({
             }`}
           >
             <Eye className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={t("md.exportDocx")}
+            aria-label={t("md.exportDocx")}
+            disabled={disabled || !value.trim()}
+            onClick={handleExportDocx}
+            className={buttonClass}
+          >
+            <FileDown className="h-4 w-4" />
           </button>
           <button
             type="button"

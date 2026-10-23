@@ -14,17 +14,6 @@ export const CUSTOM_TYPES_ENDPOINT = "/api/my/v1/custom-types";
 export const ATTACHMENTS_ENDPOINT = "/api/my/v1/attachments";
 export const MAX_UPLOAD = 5 * 1024 * 1024;
 
-/** Field types available for ad-hoc fields (no attachment: those need a template). */
-export const AD_HOC_TYPES = [
-  "number",
-  "date",
-  "string",
-  "html",
-  "md",
-  "xml",
-  "custom",
-];
-
 export interface FormState {
   mode: "create" | "update";
   id?: number;
@@ -35,8 +24,6 @@ export interface FormState {
   assigneeIds: number[];
   /** field name -> raw input value (strings; attachments kept as object). */
   fieldValues: Record<string, unknown>;
-  /** ad-hoc fields (no template): [{name, type, customType, value}] */
-  adHoc: { name: string; type: string; customType: string; value: string }[];
 }
 
 export const emptyForm = (): FormState => ({
@@ -47,7 +34,6 @@ export const emptyForm = (): FormState => ({
   progress: "",
   assigneeIds: [],
   fieldValues: {},
-  adHoc: [],
 });
 
 /** Convert a stored field value to the form representation. */
@@ -136,48 +122,32 @@ export interface FieldEditorProps {
 }
 
 /**
- * Builds the fields payload from the form state, using either the selected
- * template definition or the ad-hoc fields.
+ * Builds the fields payload from the form state, using the selected
+ * template definition (fields exist only inside a template).
+ * `fields === null` means the `fields` key must not be sent: update of a
+ * legacy record without a template keeps its stored fields as-is.
  */
 export function buildFieldPayload(
   state: FormState,
   currentTemplate: InstanceTemplate | null,
   t: (key: string, params?: Record<string, string | number>) => string
-): { fields: unknown[]; error: string | null } {
-  if (currentTemplate) {
-    const fields: unknown[] = currentTemplate.definition
-      .filter((def) => def.type !== "progress")
-      .map((def) => ({
-        name: def.name,
-        value: coerceFieldValue(
-          def.type,
-          state.fieldValues[def.name],
-          def.customType ?? null
-        ),
-      }));
-    return { fields, error: null };
-  }
-  const fields: unknown[] = [];
-  for (const item of state.adHoc) {
-    const name = item.name.trim();
-    if (!name) continue;
-    const raw = item.value;
-    if (raw === "" || raw === null) continue;
-    const customType =
-      item.type === "custom" ? item.customType || null : null;
-    if (item.type === "custom" && !customType) {
-      return {
-        fields: [],
-        error: t("wa.error.customTypeRequired"),
-      };
+): { fields: unknown[] | null; error: string | null } {
+  if (!currentTemplate) {
+    if (state.mode === "create") {
+      return { fields: null, error: t("wa.error.templateRequired") };
     }
-    fields.push({
-      name,
-      type: item.type,
-      customType,
-      value: coerceFieldValue(item.type, raw, customType),
-    });
+    return { fields: null, error: null };
   }
+  const fields: unknown[] = currentTemplate.definition
+    .filter((def) => def.type !== "progress")
+    .map((def) => ({
+      name: def.name,
+      value: coerceFieldValue(
+        def.type,
+        state.fieldValues[def.name],
+        def.customType ?? null
+      ),
+    }));
   return { fields, error: null };
 }
 

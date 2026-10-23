@@ -411,10 +411,10 @@ def validate_field_value(field_type, value, custom_type):
 
 
 def normalize_fields(raw_fields, template):
-    """Build the canonical field list for a container (template fields
-    or ad-hoc typed fields); the progress field is excluded: it lives in
-    its own column, driven by the template's workflow progress type.
-    Returns (fields, error).
+    """Build the canonical field list for a container. Fields are defined
+    only by the template (the ad-hoc field path is gone); the progress
+    field is excluded: it lives in its own column, driven by the template's
+    workflow progress type. Returns (fields, error).
     """
     provided = {}
     if raw_fields:
@@ -429,53 +429,40 @@ def normalize_fields(raw_fields, template):
             provided[field_name.lower()] = (field_name, item)
 
     fields = []
-    if template is not None:
-        for definition in template.get("definition", []):
-            if not isinstance(definition, dict):
-                continue
-            if str(definition.get("type") or "").strip() == "progress":
-                continue
-            field_name = str(definition.get("name") or "").strip()
-            field_type = str(definition.get("type") or "string").strip()
-            if field_type not in ALLOWED_TYPES:
-                field_type = "string"
-            custom_type_name = definition.get("customType")
-            given = provided.get(field_name.lower())
-            value = given[1].get("value") if given else None
-            fields.append(
-                {
-                    "name": field_name,
-                    "type": field_type,
-                    "value": value,
-                    "customType": custom_type_name,
-                    "description": str(definition.get("description") or ""),
-                }
-            )
-        for key in provided:
-            if key not in [f["name"].lower() for f in fields]:
-                return None, fail(
-                    "workInstances.error.fieldUnknown", field=provided[key][0]
-                )
+    if template is None:
+        # Fields exist only inside a template: with no template no field
+        # can be defined (creation requires a template; updates of legacy
+        # template-less rows send no fields and keep the stored ones).
+        if provided:
+            return None, fail("workContainers.error.templateRequired")
         return fields, None
 
-    for key, (field_name, item) in provided.items():
-        field_type = str(item.get("type") or "").strip()
-        if field_type not in ALLOWED_TYPES:
-            return None, fail(
-                "workInstances.error.fieldType", field=field_name
-            )
-        value = item.get("value")
-        if value is None and "value" not in item:
+    for definition in template.get("definition", []):
+        if not isinstance(definition, dict):
             continue
+        if str(definition.get("type") or "").strip() == "progress":
+            continue
+        field_name = str(definition.get("name") or "").strip()
+        field_type = str(definition.get("type") or "string").strip()
+        if field_type not in ALLOWED_TYPES:
+            field_type = "string"
+        custom_type_name = definition.get("customType")
+        given = provided.get(field_name.lower())
+        value = given[1].get("value") if given else None
         fields.append(
             {
                 "name": field_name,
                 "type": field_type,
                 "value": value,
-                "customType": item.get("customType"),
-                "description": str(item.get("description") or ""),
+                "customType": custom_type_name,
+                "description": str(definition.get("description") or ""),
             }
         )
+    for key in provided:
+        if key not in [f["name"].lower() for f in fields]:
+            return None, fail(
+                "workInstances.error.fieldUnknown", field=provided[key][0]
+            )
     return fields, None
 
 
@@ -689,12 +676,14 @@ def do_create(ctx, session, data):
 
     progress_value = str(data.get("progress") or "").strip() or None
     raw_template = data.get("templateId", data.get("template_id"))
-    template_id = None
-    if raw_template not in (None, ""):
-        try:
-            template_id = int(raw_template)
-        except (TypeError, ValueError):
-            return fail("workContainers.error.templateNotFound")
+    if raw_template in (None, ""):
+        # Work containers always use a template: fields (and the optional
+        # progress workflow) come from the template definition.
+        return fail("workContainers.error.templateRequired")
+    try:
+        template_id = int(raw_template)
+    except (TypeError, ValueError):
+        return fail("workContainers.error.templateNotFound")
 
     with ctx.POSTGRESQL.cursor() as cur:
         modes = accessible_project_modes(cur, session.get("userId"))
@@ -707,11 +696,9 @@ def do_create(ctx, session, data):
             )
             if not cur.fetchone():
                 return fail("workContainers.error.workspaceNotFound")
-        template = None
-        if template_id is not None:
-            template = fetch_template(cur, template_id)
-            if template is None or template["projectId"] != project_id:
-                return fail("workContainers.error.templateNotFound")
+        template = fetch_template(cur, template_id)
+        if template is None or template["projectId"] != project_id:
+            return fail("workContainers.error.templateNotFound")
         fields, error = normalize_fields(data.get("fields"), template)
         if error is not None:
             return error

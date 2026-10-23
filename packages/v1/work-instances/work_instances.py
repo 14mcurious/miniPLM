@@ -407,13 +407,10 @@ def fetch_template(cur, template_id):
 
 
 def normalize_fields(raw_fields, template):
-    """Build the canonical field list.
-
-    With a template: every template field is present (value from the
-    request or null); unknown names are rejected. Without a template: the
-    provided fields must each declare a valid type (and customType for
-    custom fields).
-    Returns (fields, error).
+    """Build the canonical field list. Fields are defined only by the
+    template (the ad-hoc field path is gone); the progress field is
+    excluded: it lives in its own column, driven by the template's workflow
+    progress type. Returns (fields, error).
     """
     provided = {}
     if raw_fields:
@@ -428,53 +425,42 @@ def normalize_fields(raw_fields, template):
             provided[field_name.lower()] = (field_name, item)
 
     fields = []
-    if template is not None:
-        for definition in template.get("definition", []):
-            if not isinstance(definition, dict):
-                continue
-            # The progress field lives in its own column, driven by the
-            # template's workflow progress type: it is not a JSON field.
-            if str(definition.get("type") or "").strip() == "progress":
-                continue
-            field_name = str(definition.get("name") or "").strip()
-            field_type = str(definition.get("type") or "string").strip()
-            if field_type not in ALLOWED_TYPES:
-                field_type = "string"
-            custom_type_name = definition.get("customType")
-            given = provided.get(field_name.lower())
-            value = given[1].get("value") if given else None
-            fields.append(
-                {
-                    "name": field_name,
-                    "type": field_type,
-                    "value": value,
-                    "customType": custom_type_name,
-                    "description": str(definition.get("description") or ""),
-                }
-            )
-        for key in provided:
-            if key not in [f["name"].lower() for f in fields]:
-                return None, fail(
-                    "workInstances.error.fieldUnknown", field=provided[key][0]
-                )
+    if template is None:
+        # Fields exist only inside a template: with no template no field
+        # can be defined (creation requires a template; updates of legacy
+        # template-less rows send no fields and keep the stored ones).
+        if provided:
+            return None, fail("workInstances.error.templateRequired")
         return fields, None
 
-    for key, (field_name, item) in provided.items():
-        field_type = str(item.get("type") or "").strip()
-        if field_type not in ALLOWED_TYPES:
-            return None, fail("workInstances.error.fieldType", field=field_name)
-        value = item.get("value")
-        if value is None and "value" not in item:
+    for definition in template.get("definition", []):
+        if not isinstance(definition, dict):
             continue
+        # The progress field lives in its own column, driven by the
+        # template's workflow progress type: it is not a JSON field.
+        if str(definition.get("type") or "").strip() == "progress":
+            continue
+        field_name = str(definition.get("name") or "").strip()
+        field_type = str(definition.get("type") or "string").strip()
+        if field_type not in ALLOWED_TYPES:
+            field_type = "string"
+        custom_type_name = definition.get("customType")
+        given = provided.get(field_name.lower())
+        value = given[1].get("value") if given else None
         fields.append(
             {
                 "name": field_name,
                 "type": field_type,
                 "value": value,
-                "customType": item.get("customType"),
-                "description": str(item.get("description") or ""),
+                "customType": custom_type_name,
+                "description": str(definition.get("description") or ""),
             }
         )
+    for key in provided:
+        if key not in [f["name"].lower() for f in fields]:
+            return None, fail(
+                "workInstances.error.fieldUnknown", field=provided[key][0]
+            )
     return fields, None
 
 
@@ -662,11 +648,14 @@ def do_create(ctx, session, data):
 
     template = None
     raw_template = data.get("templateId", data.get("template_id"))
-    if raw_template not in (None, ""):
-        try:
-            template_id = int(raw_template)
-        except (TypeError, ValueError):
-            return fail("workInstances.error.templateNotFound")
+    if raw_template in (None, ""):
+        # Work instances always use a template: fields (and the optional
+        # progress workflow) come from the template definition.
+        return fail("workInstances.error.templateRequired")
+    try:
+        template_id = int(raw_template)
+    except (TypeError, ValueError):
+        return fail("workInstances.error.templateNotFound")
 
     progress_value = str(data.get("progress") or "").strip() or None
     assignee_ids = data.get("assignees", data.get("assigneeIds"))
@@ -690,10 +679,9 @@ def do_create(ctx, session, data):
         # belongs to a work space.
         if container_row[2] is None:
             return fail("workInstances.error.containerWithoutWorkspace")
-        if raw_template not in (None, ""):
-            template = fetch_template(cur, template_id)
-            if template is None or template["projectId"] != project_id:
-                return fail("workInstances.error.templateNotFound")
+        template = fetch_template(cur, template_id)
+        if template is None or template["projectId"] != project_id:
+            return fail("workInstances.error.templateNotFound")
 
         fields, error = normalize_fields(data.get("fields"), template)
         if error is not None:
@@ -740,7 +728,7 @@ def do_create(ctx, session, data):
                 session.get("userId"),
                 progress_value,
                 json.dumps([int(x) for x in assignee_ids]),
-                template["id"] if template else None,
+                template_id,
                 json.dumps(fields),
             ),
         )

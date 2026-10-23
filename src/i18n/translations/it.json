@@ -617,6 +617,7 @@
   "workInstances.error.containerNotFound": "Work container non trovato",
   "workInstances.error.containerWithoutWorkspace": "Il work container selezionato non è collegato a un work space",
   "workInstances.error.templateNotFound": "Template non trovato",
+  "workInstances.error.templateRequired": "Devi selezionare un template prima di salvare il work instance",
   "workInstances.error.fieldUnknown": "Il campo “{field}” non esiste nel template",
   "workInstances.error.fieldType": "Valore non valido per il tipo del campo",
   "workInstances.error.xmlInvalid": "Contenuto XML non valido",

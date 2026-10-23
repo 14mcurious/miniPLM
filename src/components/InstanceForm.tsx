@@ -13,7 +13,6 @@ import type {
   WorkContainer,
 } from "@/lib/types";
 import {
-  AD_HOC_TYPES,
   ATTACHMENTS_ENDPOINT,
   INSTANCES_ENDPOINT,
   MAX_UPLOAD,
@@ -108,8 +107,12 @@ const InstanceForm = ({
         title: form.title.trim(),
         progress: form.progress,
         assignees: form.assigneeIds,
-        fields,
       };
+      // fields === null: legacy record without a template; omit the key
+      // so the stored fields are kept untouched by the backend merge.
+      if (fields) {
+        payload.fields = fields;
+      }
       if (form.mode === "create") {
         payload.projectId = Number(projectId);
         payload.workContainerId = Number(form.workContainerId);
@@ -255,7 +258,6 @@ const InstanceForm = ({
                 ...form,
                 templateId,
                 fieldValues,
-                adHoc: [],
                 // A different template means a different progress workflow:
                 // the previous value is not valid for the new one.
                 progress: "",
@@ -372,130 +374,17 @@ const InstanceForm = ({
               />
             ))}
         </div>
+      ) : form.mode === "update" ? (
+        <div className="border-t pt-4">
+          <p className="text-sm text-muted-foreground">
+            {t("wa.noTemplateHint")}
+          </p>
+        </div>
       ) : (
-        <div className="space-y-3 border-t pt-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-base font-semibold text-foreground">
-              {t("wa.adHocFields")}
-            </h3>
-            <Button
-              size="sm"
-              variant="outline"
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                setForm({
-                  ...form,
-                  adHoc: [
-                    ...form.adHoc,
-                    { name: "", type: "string", customType: "", value: "" },
-                  ],
-                })
-              }
-            >
-              {t("wa.addField")}
-            </Button>
-          </div>
-          {form.adHoc.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              {t("wa.adHocHint")}
-            </p>
-          )}
-          {form.adHoc.map((item, index) => (
-            <div
-              key={index}
-              className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
-            >
-              <Input
-                id={`adhoc-name-${index}`}
-                name={`adhocName${index}`}
-                placeholder={t("wa.fieldName")}
-                value={item.name}
-                onChange={(e) => {
-                  const next = [...form.adHoc];
-                  next[index] = { ...item, name: e.target.value };
-                  setForm({ ...form, adHoc: next });
-                }}
-                disabled={busy}
-              />
-              <select
-                id={`adhoc-type-${index}`}
-                name={`adhocType${index}`}
-                value={item.type}
-                onChange={(e) => {
-                  const next = [...form.adHoc];
-                  next[index] = { ...item, type: e.target.value };
-                  setForm({ ...form, adHoc: next });
-                }}
-                disabled={busy}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-              >
-                {AD_HOC_TYPES.map((typeValue) => (
-                  <option key={typeValue} value={typeValue}>
-                    {t(`fieldType.${typeValue}`)}
-                  </option>
-                ))}
-              </select>
-              {item.type === "custom" ? (
-                <select
-                  id={`adhoc-custom-${index}`}
-                  name={`adhocCustomType${index}`}
-                  value={item.customType}
-                  onChange={(e) => {
-                    const next = [...form.adHoc];
-                    next[index] = {
-                      ...item,
-                      customType: e.target.value,
-                    };
-                    setForm({ ...form, adHoc: next });
-                  }}
-                  disabled={busy}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-                >
-                  <option value="">—</option>
-                  {customTypes
-                    .filter((type) => !type.isDisabled)
-                    .map((type) => (
-                      <option key={type.id} value={type.name}>
-                        {type.name}
-                      </option>
-                    ))}
-                </select>
-              ) : (
-                <span className="hidden sm:block" aria-hidden="true" />
-              )}
-              <div className="sm:col-span-4">
-                <Input
-                  id={`adhoc-value-${index}`}
-                  name={`adhocValue${index}`}
-                  placeholder={t("wa.fieldValue")}
-                  value={typeof item.value === "string" ? item.value : ""}
-                  onChange={(e) => {
-                    const next = [...form.adHoc];
-                    next[index] = { ...item, value: e.target.value };
-                    setForm({ ...form, adHoc: next });
-                  }}
-                  disabled={busy}
-                />
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                type="button"
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    adHoc: form.adHoc.filter(
-                      (_, i) => i !== index
-                    ),
-                  })
-                }
-                disabled={busy}
-              >
-                {t("wa.remove")}
-              </Button>
-            </div>
-          ))}
+        <div className="border-t pt-4">
+          <p className="text-sm text-muted-foreground">
+            {t("wa.error.templateRequired")}
+          </p>
         </div>
       )}
       {formError && (

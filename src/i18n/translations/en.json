@@ -609,6 +609,8 @@
   "workContainers.error.notFound": "Work container not found",
   "workContainers.error.noChange": "No change to save",
   "workContainers.error.request": "The operation could not be completed",
+  "workContainers.error.templateNotFound": "Template not found",
+  "workContainers.error.templateRequired": "A template must be selected before the work container can be saved",
   "workInstances.error.containerNotFound": "Work container not found",
   "workInstances.error.containerWithoutWorkspace": "The selected work container is not attached to a work space",
   "workInstances.error.templateNotFound": "Template not found",

@@ -19,7 +19,6 @@ import WorkAreaInstancesTable from "@/components/WorkAreaInstancesTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  AD_HOC_TYPES,
   ATTACHMENTS_ENDPOINT,
   CUSTOM_TYPES_ENDPOINT,
   MAX_UPLOAD,
@@ -83,9 +82,6 @@ const WorkAreaWorkspaceDetail = () => {
   const [containerFieldValues, setContainerFieldValues] = useState<
     Record<string, unknown>
   >({});
-  const [containerAdHoc, setContainerAdHoc] = useState<
-    { name: string; type: string; customType: string; value: string }[]
-  >([]);
   const [containerUploading, setContainerUploading] = useState<
     string | null
   >(null);
@@ -209,7 +205,6 @@ const WorkAreaWorkspaceDetail = () => {
     setProgress("");
     setContainerTemplateId("");
     setContainerFieldValues({});
-    setContainerAdHoc([]);
     setFormError(null);
   };
 
@@ -226,7 +221,6 @@ const WorkAreaWorkspaceDetail = () => {
       fieldValues[field.name] = toFormValue(field);
     }
     setContainerFieldValues(fieldValues);
-    setContainerAdHoc([]);
     setFormError(null);
   };
 
@@ -262,7 +256,6 @@ const WorkAreaWorkspaceDetail = () => {
         progress: instance.progress ?? "",
         assigneeIds: instance.assigneeIds ?? [],
         fieldValues,
-        adHoc: [],
       });
       if (fromUrl) {
         const next = new URLSearchParams(searchParams);
@@ -402,14 +395,13 @@ const WorkAreaWorkspaceDetail = () => {
                           error: fieldsError,
                         } = buildFieldPayload(
                           {
-                            mode: "update",
+                            mode: formMode.mode,
                             title: "",
                             workContainerId: "",
                             templateId: containerTemplateId,
                             progress: "",
                             assigneeIds: [],
                             fieldValues: containerFieldValues,
-                            adHoc: containerAdHoc,
                           },
                           containerTemplate,
                           t
@@ -427,8 +419,13 @@ const WorkAreaWorkspaceDetail = () => {
                           templateId: containerTemplateId
                             ? Number(containerTemplateId)
                             : null,
-                          fields: templateFields,
                         };
+                        // fields === null: legacy record without a
+                        // template; omit the key so the stored fields are
+                        // kept untouched by the backend merge.
+                        if (templateFields) {
+                          payload.fields = templateFields;
+                        }
                         if (formMode.mode === "create") {
                           payload.operation = "create";
                         } else {
@@ -492,7 +489,6 @@ const WorkAreaWorkspaceDetail = () => {
                             }
                             setContainerTemplateId(templateId);
                             setContainerFieldValues(fieldValues);
-                            setContainerAdHoc([]);
                             // A different template means a different
                             // progress workflow: reset the value.
                             setProgress("");
@@ -592,130 +588,12 @@ const WorkAreaWorkspaceDetail = () => {
                         </div>
                       )}
                     {!containerTemplate && (
-                      <div className="space-y-3 border-t pt-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-base font-semibold text-foreground">
-                            {t("wa.adHocFields")}
-                          </h3>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            type="button"
-                            disabled={busy}
-                            onClick={() =>
-                              setContainerAdHoc([
-                                ...containerAdHoc,
-                                {
-                                  name: "",
-                                  type: "string",
-                                  customType: "",
-                                  value: "",
-                                },
-                              ])
-                            }
-                          >
-                            {t("wa.addField")}
-                          </Button>
-                        </div>
-                        {containerAdHoc.length === 0 && (
-                          <p className="text-sm text-muted-foreground">
-                            {t("wa.adHocHint")}
-                          </p>
-                        )}
-                        {containerAdHoc.map((item, index) => (
-                          <div
-                            key={index}
-                            className="grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_1fr_auto]"
-                          >
-                            <Input
-                              id={`container-adhoc-name-${index}`}
-                              name={`containerAdhocName${index}`}
-                              placeholder={t("wa.fieldName")}
-                              value={item.name}
-                              onChange={(e) => {
-                                const next = [...containerAdHoc];
-                                next[index] = { ...item, name: e.target.value };
-                                setContainerAdHoc(next);
-                              }}
-                              disabled={busy}
-                            />
-                            <select
-                              id={`container-adhoc-type-${index}`}
-                              name={`containerAdhocType${index}`}
-                              value={item.type}
-                              onChange={(e) => {
-                                const next = [...containerAdHoc];
-                                next[index] = { ...item, type: e.target.value };
-                                setContainerAdHoc(next);
-                              }}
-                              disabled={busy}
-                              className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-                            >
-                              {AD_HOC_TYPES.map((typeValue) => (
-                                <option key={typeValue} value={typeValue}>
-                                  {t(`fieldType.${typeValue}`)}
-                                </option>
-                              ))}
-                            </select>
-                            {item.type === "custom" ? (
-                              <select
-                                id={`container-adhoc-custom-${index}`}
-                                name={`containerAdhocCustomType${index}`}
-                                value={item.customType}
-                                onChange={(e) => {
-                                  const next = [...containerAdHoc];
-                                  next[index] = {
-                                    ...item,
-                                    customType: e.target.value,
-                                  };
-                                  setContainerAdHoc(next);
-                                }}
-                                disabled={busy}
-                                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground"
-                              >
-                                <option value="">—</option>
-                                {customTypes
-                                  .filter((type) => !type.isDisabled)
-                                  .map((type) => (
-                                    <option key={type.id} value={type.name}>
-                                      {type.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            ) : (
-                              <span className="hidden sm:block" aria-hidden="true" />
-                            )}
-                            <div className="sm:col-span-4">
-                              <Input
-                                id={`container-adhoc-value-${index}`}
-                                name={`containerAdhocValue${index}`}
-                                placeholder={t("wa.fieldValue")}
-                                value={item.value}
-                                onChange={(e) => {
-                                  const next = [...containerAdHoc];
-                                  next[index] = { ...item, value: e.target.value };
-                                  setContainerAdHoc(next);
-                                }}
-                                disabled={busy}
-                              />
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              type="button"
-                              disabled={busy}
-                              onClick={() =>
-                                setContainerAdHoc(
-                                  containerAdHoc.filter(
-                                    (_, i) => i !== index
-                                  )
-                                )
-                              }
-                            >
-                              {t("wa.remove")}
-                            </Button>
-                          </div>
-                        ))}
+                      <div className="border-t pt-4">
+                        <p className="text-sm text-muted-foreground">
+                          {formMode.mode === "update"
+                            ? t("wa.noTemplateHint")
+                            : t("wa.error.templateRequired")}
+                        </p>
                       </div>
                     )}
                     {formError && (

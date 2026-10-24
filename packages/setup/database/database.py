@@ -344,6 +344,27 @@ STATEMENTS = [
         " END IF;"
         " END $$"
     ),
+    # Markdown images: private image store backing the "insert image from
+    # disk" feature of the MD editor. Bytes live in the S3 data bucket
+    # (md-images/ prefix); id is the stable reference kept in the markdown
+    # source (/api/my/v1/md-image?img=<id>). Updating overwrites the object
+    # under the same id; deleting removes object + row.
+    (
+        'CREATE TABLE IF NOT EXISTS "MiniPLM"."md_images" ('
+        "  id TEXT PRIMARY KEY,"
+        "  s3_key TEXT NOT NULL,"
+        "  file_name TEXT NOT NULL,"
+        "  content_type TEXT NOT NULL,"
+        "  size_bytes BIGINT NOT NULL,"
+        "  created_by BIGINT REFERENCES \"MiniPLM\".\"users\"(id) ON DELETE SET NULL,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        ")"
+    ),
+    (
+        'CREATE INDEX IF NOT EXISTS md_images_updated_idx'
+        ' ON "MiniPLM"."md_images" (updated_at DESC)'
+    ),
 ]
 
 

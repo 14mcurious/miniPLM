@@ -10,6 +10,8 @@ import {
   Heading3,
   HelpCircle,
   Image as ImageIcon,
+  ImagePlus,
+  Images,
   Italic,
   Link as LinkIcon,
   List,
@@ -18,13 +20,28 @@ import {
   Minus,
   PenLine,
   Quote,
+  RefreshCw,
   Strikethrough,
   Table as TableIcon,
+  Trash2,
+  Upload,
   X,
   Eye,
 } from "lucide-react";
 import { useI18n } from "@/i18n";
 import MarkdownView from "@/components/MarkdownView";
+import {
+  MD_IMAGE_ACCEPT,
+  MD_IMAGE_MAX_SIZE,
+  deleteMdImage,
+  listMdImages,
+  mdImageErrorMessage,
+  mdImageRef,
+  replaceMdImage,
+  resolveMdImages,
+  uploadMdImage,
+  type MdImageInfo,
+} from "@/lib/md-image";
 
 interface MarkdownEditorProps {
   id: string;
@@ -176,6 +193,18 @@ const MarkdownEditor = ({
   const [mode, setMode] = useState<"write" | "preview">("write");
   const [helpOpen, setHelpOpen] = useState(false);
 
+  // Private image store: insertion from disk + management dialog.
+  const imageFileRef = useRef<HTMLInputElement>(null);
+  const replaceFileRef = useRef<HTMLInputElement>(null);
+  const replaceTargetRef = useRef<string | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [manageImages, setManageImages] = useState<MdImageInfo[]>([]);
+  const [manageLoading, setManageLoading] = useState(false);
+  const [manageError, setManageError] = useState<string | null>(null);
+  const [manageBusyId, setManageBusyId] = useState<string | null>(null);
+  const manageBodyRef = useRef<HTMLDivElement>(null);
+
   const apply = (next: string, selStart: number, selEnd: number) => {
     onChange(next);
     requestAnimationFrame(() => {
@@ -199,6 +228,118 @@ const MarkdownEditor = ({
         toast.error(t("md.exportDocxError"));
       });
   };
+
+  // --- Private image store: insert from disk + manage ---------------------
+
+  /** Client-side validation shared by insert and replace. */
+  const validateImageFile = (file: File): string | null => {
+    if (file.size > MD_IMAGE_MAX_SIZE) {
+      return t("md.imageTooLarge", { max: "700 KB" });
+    }
+    if (!MD_IMAGE_ACCEPT.split(",").includes(file.type)) {
+      return t("md.imageUnsupported");
+    }
+    return null;
+  };
+
+  const handleInsertImage = async (file: File) => {
+    const invalid = validateImageFile(file);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
+    setImageBusy(true);
+    try {
+      const uploaded = await uploadMdImage(file);
+      const alt = uploaded.fileName.replace(/\.[a-z0-9]+$/i, "");
+      actions.insertBlock(`![${alt}](${mdImageRef(uploaded.id)})`);
+      toast.success(t("md.imageInserted"));
+    } catch (error: unknown) {
+      console.error("md image upload failed:", error);
+      toast.error(mdImageErrorMessage(error, t));
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
+  const loadManageImages = async () => {
+    setManageLoading(true);
+    setManageError(null);
+    try {
+      setManageImages(await listMdImages());
+    } catch (error: unknown) {
+      console.error("md image list failed:", error);
+      setManageError(mdImageErrorMessage(error, t));
+    } finally {
+      setManageLoading(false);
+    }
+  };
+
+  const handleManageOpen = () => {
+    setManageOpen(true);
+    void loadManageImages();
+  };
+
+  const handleReplaceClick = (imageId: string) => {
+    replaceTargetRef.current = imageId;
+    replaceFileRef.current?.click();
+  };
+
+  const handleReplaceFile = async (file: File) => {
+    const target = replaceTargetRef.current;
+    replaceTargetRef.current = null;
+    if (!target) return;
+    const invalid = validateImageFile(file);
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
+    setManageBusyId(target);
+    try {
+      await replaceMdImage(target, file);
+      toast.success(t("md.imageReplaced"));
+      await loadManageImages();
+    } catch (error: unknown) {
+      console.error("md image replace failed:", error);
+      toast.error(mdImageErrorMessage(error, t));
+    } finally {
+      setManageBusyId(null);
+    }
+  };
+
+  const handleDeleteImage = async (image: MdImageInfo) => {
+    if (!window.confirm(t("md.manageDeleteConfirm"))) return;
+    setManageBusyId(image.id);
+    try {
+      await deleteMdImage(image.id);
+      toast.success(t("md.imageDeleted"));
+      setManageImages((images) =>
+        images.filter((item) => item.id !== image.id)
+      );
+    } catch (error: unknown) {
+      console.error("md image delete failed:", error);
+      toast.error(mdImageErrorMessage(error, t));
+    } finally {
+      setManageBusyId(null);
+    }
+  };
+
+  // Render thumbnails inside the open manage dialog.
+  useEffect(() => {
+    if (manageOpen && manageBodyRef.current) {
+      resolveMdImages(manageBodyRef.current);
+    }
+  }, [manageOpen, manageImages]);
+
+  // Close the manage dialog on Escape.
+  useEffect(() => {
+    if (!manageOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setManageOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [manageOpen]);
 
   const actions: MarkdownActions = {
     wrap(before, after = before, placeholder = "") {
@@ -290,6 +431,35 @@ const MarkdownEditor = ({
             })}
           </span>
         ))}
+        <span className="flex items-center gap-1">
+          <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
+          <button
+            type="button"
+            title={t("md.t.insertImage")}
+            aria-label={t("md.t.insertImage")}
+            disabled={disabled || mode !== "write" || imageBusy}
+            onClick={() => imageFileRef.current?.click()}
+            className={buttonClass}
+          >
+            {imageBusy ? (
+              <span className="h-4 w-4 animate-pulse text-muted-foreground">
+                {t("md.uploadingImage")}
+              </span>
+            ) : (
+              <ImagePlus className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            type="button"
+            title={t("md.t.manageImages")}
+            aria-label={t("md.t.manageImages")}
+            disabled={disabled}
+            onClick={handleManageOpen}
+            className={buttonClass}
+          >
+            <Images className="h-4 w-4" />
+          </button>
+        </span>
         <span className="ml-auto flex items-center gap-1">
           <button
             type="button"
@@ -407,6 +577,140 @@ const MarkdownEditor = ({
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden file pickers for the private image store. */}
+      <input
+        ref={imageFileRef}
+        id={`${id}-image-upload`}
+        name={`${id}-image-upload`}
+        type="file"
+        accept={MD_IMAGE_ACCEPT}
+        className="hidden"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void handleInsertImage(file);
+        }}
+      />
+      <input
+        ref={replaceFileRef}
+        id={`${id}-image-replace`}
+        name={`${id}-image-replace`}
+        type="file"
+        accept={MD_IMAGE_ACCEPT}
+        className="hidden"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void handleReplaceFile(file);
+        }}
+      />
+
+      {manageOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("md.manageTitle")}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setManageOpen(false)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg border bg-background shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-base font-semibold text-foreground">
+                {t("md.manageTitle")}
+              </h3>
+              <button
+                type="button"
+                aria-label={t("md.close")}
+                title={t("md.close")}
+                onClick={() => setManageOpen(false)}
+                className={buttonClass}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div ref={manageBodyRef} className="overflow-y-auto px-4 py-3">
+              <p className="mb-3 text-sm text-muted-foreground">
+                {t("md.manageIntro")}
+              </p>
+              {manageLoading && (
+                <p className="text-sm text-muted-foreground">
+                  {t("md.manageLoading")}
+                </p>
+              )}
+              {!manageLoading && manageError && (
+                <div className="mb-3 space-y-2">
+                  <p className="text-sm text-destructive">
+                    {manageError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void loadManageImages()}
+                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t("md.manageReload")}
+                  </button>
+                </div>
+              )}
+              {!manageLoading && !manageError && manageImages.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {t("md.manageEmpty")}
+                </p>
+              )}
+              <div className="space-y-2">
+                {manageImages.map((image) => {
+                  const busy = manageBusyId === image.id;
+                  return (
+                    <div
+                      key={image.id}
+                      className="flex items-center gap-3 rounded-md border p-2"
+                    >
+                      <img
+                        src={image.ref}
+                        alt={image.fileName}
+                        className="h-12 w-12 flex-none rounded border bg-muted object-contain"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {image.fileName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {Math.round(image.size / 1024)} KB ·{" "}
+                          {image.contentType} · {image.updatedAt}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={busy}
+                        onClick={() => handleReplaceClick(image.id)}
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        {t("md.manageReplace")}
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-sm text-destructive hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={busy}
+                        onClick={() => void handleDeleteImage(image)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {t("md.manageDelete")}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

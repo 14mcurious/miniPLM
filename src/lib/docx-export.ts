@@ -4,6 +4,7 @@ import {
   Document,
   ExternalHyperlink,
   HeadingLevel,
+  ImageRun,
   LevelFormat,
   Packer,
   Paragraph,
@@ -17,6 +18,7 @@ import {
   type IParagraphOptions,
 } from "docx";
 import { marked, type Token, type Tokens } from "marked";
+import { fetchImagePayload, mdImageIdFromRef } from "@/lib/md-image";
 
 /**
  * Markdown → DOCX export (client-side).
@@ -63,6 +65,94 @@ interface RenderState {
 interface RenderCtx {
   quote: number;
   state: RenderState;
+  /** App-managed images pre-fetched for embedding (href -> bytes/dims). */
+  mdImages: Map<string, ResolvedMdImage>;
+}
+
+/** App-managed image resolved for DOCX embedding. */
+interface ResolvedMdImage {
+  data: Uint8Array;
+  type: "png" | "jpg" | "gif";
+  width: number;
+  height: number;
+}
+
+const MD_IMAGE_MAX_WIDTH_PX = 560;
+
+function base64ToBytes(content: string): Uint8Array {
+  const byteChars = atob(content);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i += 1) {
+    bytes[i] = byteChars.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/** Fetch one app-managed image and measure it for embedding. */
+async function resolveMdImage(
+  href: string
+): Promise<ResolvedMdImage | null> {
+  const id = mdImageIdFromRef(href);
+  if (!id) return null;
+  try {
+    const { content, contentType } = await fetchImagePayload(id);
+    if (contentType === "image/webp") {
+      // Word has no WebP ImageRun support; the exporter falls back to the
+      // caption link for these.
+      return null;
+    }
+    const type =
+      contentType === "image/png"
+        ? "png"
+        : contentType === "image/gif"
+          ? "gif"
+          : "jpg";
+    const bytes = base64ToBytes(content);
+    const blob = new Blob([bytes.buffer as ArrayBuffer], {
+      type: contentType || "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    const dims = await new Promise<{ w: number; h: number } | null>(
+      (resolve) => {
+        const img = new Image();
+        img.onload = () =>
+          resolve({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => resolve(null);
+        img.src = url;
+      }
+    );
+    URL.revokeObjectURL(url);
+    if (!dims || !dims.w || !dims.h) return null;
+    const scale = Math.min(1, MD_IMAGE_MAX_WIDTH_PX / dims.w);
+    return {
+      data: bytes,
+      type,
+      width: Math.max(1, Math.round(dims.w * scale)),
+      height: Math.max(1, Math.round(dims.h * scale)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Collect the app-managed image references used by the markdown source. */
+function collectMdImageRefs(tokens: Token[]): string[] {
+  const refs: string[] = [];
+  const walk = (list: Token[]): void => {
+    for (const token of list) {
+      if (token.type === "image") {
+        const href = (token as Tokens.Image).href;
+        if (href && mdImageIdFromRef(href) && !refs.includes(href)) {
+          refs.push(href);
+        }
+      }
+      if (token.tokens) {
+        walk(token.tokens as Token[]);
+      }
+    }
+  };
+  walk(tokens);
+  return refs;
 }
 
 function quoteIndent(ctx: RenderCtx): Partial<IParagraphOptions> {
@@ -76,33 +166,37 @@ function isSafeUrl(url: string): boolean {
 /** Map inline marked tokens to Word runs; links become external hyperlinks. */
 function inlineToRuns(
   tokens: Token[] | undefined,
-  style: RunStyle = {}
+  style: RunStyle = {},
+  ctx: RenderCtx = { quote: 0, state: { listInstance: 0 }, mdImages: new Map() }
 ): ParagraphChild[] {
   const out: ParagraphChild[] = [];
   for (const token of tokens ?? []) {
     switch (token.type) {
       case "strong":
         out.push(
-          ...inlineToRuns((token as Tokens.Strong).tokens, {
-            ...style,
-            bold: true,
-          })
+          ...inlineToRuns(
+            (token as Tokens.Strong).tokens,
+            { ...style, bold: true },
+            ctx
+          )
         );
         break;
       case "em":
         out.push(
-          ...inlineToRuns((token as Tokens.Em).tokens, {
-            ...style,
-            italics: true,
-          })
+          ...inlineToRuns(
+            (token as Tokens.Em).tokens,
+            { ...style, italics: true },
+            ctx
+          )
         );
         break;
       case "del":
         out.push(
-          ...inlineToRuns((token as Tokens.Del).tokens, {
-            ...style,
-            strike: true,
-          })
+          ...inlineToRuns(
+            (token as Tokens.Del).tokens,
+            { ...style, strike: true },
+            ctx
+          )
         );
         break;
       case "codespan":
@@ -151,6 +245,20 @@ function inlineToRuns(
       }
       case "image": {
         const image = token as Tokens.Image;
+        const resolved = image.href ? ctx.mdImages.get(image.href) : undefined;
+        if (resolved) {
+          out.push(
+            new ImageRun({
+              data: resolved.data,
+              type: resolved.type,
+              transformation: {
+                width: resolved.width,
+                height: resolved.height,
+              },
+            })
+          );
+          break;
+        }
         const caption = image.text || image.href;
         const runs = [
           new TextRun({
@@ -175,7 +283,7 @@ function inlineToRuns(
         // children; an inline text token (or one inside a raw HTML block)
         // is literal content.
         if (text.tokens && text.tokens.length > 0 && !text.escaped) {
-          out.push(...inlineToRuns(text.tokens, style));
+          out.push(...inlineToRuns(text.tokens, style, ctx));
         } else {
           out.push(new TextRun({ text: text.text, ...style }));
         }
@@ -190,7 +298,7 @@ function inlineToRuns(
 }
 
 /** Inline runs of the block-level text/paragraph tokens of a list item. */
-function itemInlineRuns(itemTokens: Token[]): ParagraphChild[] {
+function itemInlineRuns(itemTokens: Token[], ctx: RenderCtx): ParagraphChild[] {
   const runs: ParagraphChild[] = [];
   for (const token of itemTokens) {
     if (
@@ -198,7 +306,7 @@ function itemInlineRuns(itemTokens: Token[]): ParagraphChild[] {
       !itemBlocks(token)
     ) {
       runs.push(
-        ...inlineToRuns((token as Tokens.Text).tokens ?? undefined)
+        ...inlineToRuns((token as Tokens.Text).tokens ?? undefined, {}, ctx)
       );
     }
   }
@@ -222,7 +330,11 @@ function renderTable(token: Tokens.Table, ctx: RenderCtx): Table {
     new TableCell({
       children: [
         new Paragraph({
-          children: inlineToRuns(cell.tokens, isHeader ? { bold: true } : {}),
+          children: inlineToRuns(
+            cell.tokens,
+            isHeader ? { bold: true } : {},
+            ctx
+          ),
           ...quoteIndent(ctx),
         }),
       ],
@@ -271,7 +383,7 @@ function renderList(
         content.push(t);
       }
     }
-    const itemRuns = itemInlineRuns(content.filter((t) => !itemBlocks(t)));
+    const itemRuns = itemInlineRuns(content.filter((t) => !itemBlocks(t)), ctx);
     const prefix: ParagraphChild[] = [];
     if (checkbox) {
       prefix.push(
@@ -323,7 +435,7 @@ function renderBlocks(
         out.push(
           new Paragraph({
             heading: HEADING_LEVELS[depth - 1],
-            children: inlineToRuns(heading.tokens),
+            children: inlineToRuns(heading.tokens, {}, ctx),
           })
         );
         break;
@@ -331,7 +443,9 @@ function renderBlocks(
       case "paragraph":
       case "text": {
         const runs = inlineToRuns(
-          (token as Tokens.Paragraph).tokens ?? undefined
+          (token as Tokens.Paragraph).tokens ?? undefined,
+          {},
+          ctx
         );
         if (runs.length) {
           out.push(
@@ -406,9 +520,22 @@ function renderBlocks(
 }
 
 /** Build a Word document from a markdown source. */
-export function markdownToDocx(source: string): Document {
+export async function markdownToDocx(source: string): Promise<Document> {
   const tokens = marked.lexer(source, { gfm: true, breaks: true });
-  const children = renderBlocks(tokens, { quote: 0, state: { listInstance: 0 } });
+  // Pre-fetch app-managed images so they can be embedded (not just linked).
+  const mdImages = new Map<string, ResolvedMdImage>();
+  const refs = collectMdImageRefs(tokens);
+  if (refs.length) {
+    const resolved = await Promise.all(refs.map((ref) => resolveMdImage(ref)));
+    resolved.forEach((image, index) => {
+      if (image) mdImages.set(refs[index], image);
+    });
+  }
+  const children = renderBlocks(tokens, {
+    quote: 0,
+    state: { listInstance: 0 },
+    mdImages,
+  });
   if (!children.length) {
     children.push(new Paragraph({ children: [new TextRun({ text: "" })] }));
   }
@@ -450,7 +577,7 @@ export async function exportMarkdownToDocx(
   source: string,
   fileName: string
 ): Promise<void> {
-  const doc = markdownToDocx(source);
+  const doc = await markdownToDocx(source);
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

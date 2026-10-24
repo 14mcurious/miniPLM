@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -48,6 +48,25 @@ import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+/**
+ * Dedicated work-container history page, lazy loaded: the modification
+ * history (and this page's code) is fetched only when the user opens it
+ * from the container detail page, keeping the detail page fast.
+ */
+const WorkAreaContainerHistory = lazy(() =>
+  import("./pages/WorkAreaContainerHistory")
+);
+
+/** Suspense fallback for lazy-loaded routes (i18n aware). */
+const LazyRouteFallback = () => {
+  const { t } = useI18n();
+  return (
+    <p className="px-4 pt-14 text-sm text-muted-foreground">
+      {t("wa.loading")}
+    </p>
+  );
+};
 
 /**
  * Fires a best-effort warmup of the work-area actions as soon as a session
@@ -347,6 +366,16 @@ const App = () => (
                 element={
                   <RequireAuth>
                     <WorkAreaContainerDetail />
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/work-area/:projectId/work-containers/:containerId/history"
+                element={
+                  <RequireAuth>
+                    <Suspense fallback={<LazyRouteFallback />}>
+                      <WorkAreaContainerHistory />
+                    </Suspense>
                   </RequireAuth>
                 }
               />

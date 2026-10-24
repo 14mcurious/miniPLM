@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { History } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,8 +8,8 @@ import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import BackLink from "@/components/BackLink";
 import FieldValue from "@/components/FieldValue";
+import { Button } from "@/components/ui/button";
 import {
-  HistoryEntry,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -24,10 +25,11 @@ const formatDate = (value: string | null): string =>
   value ? new Date(value).toLocaleString() : "—";
 
 /**
- * Work container detail: all attributes, the template fields, the
- * modification history (who, what, when) and the work instances linked to
- * the container. Progress (present only when the container template defines
- * it) shows the state value with the workflow label as a hover tooltip.
+ * Work container detail: all attributes, the template fields and the work
+ * instances linked to the container. Progress (present only when the
+ * container template defines it) shows the state value with the workflow
+ * label as a hover tooltip. The modification history lives on a dedicated
+ * page (lazy loaded on demand) and is reached from the History button.
  */
 const WorkAreaContainerDetail = () => {
   const { t } = useI18n();
@@ -36,9 +38,9 @@ const WorkAreaContainerDetail = () => {
     containerId: string;
   }>();
   const { status } = useAuth();
+  const navigate = useNavigate();
 
   const [container, setContainer] = useState<WorkContainer | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -74,24 +76,17 @@ const WorkAreaContainerDetail = () => {
         return;
       }
       setContainer(found);
-      const [historyData, instancesData] = await Promise.all([
-        api<{ history: HistoryEntry[] }>(CONTAINERS_ENDPOINT, {
-          method: "POST",
-          body: JSON.stringify({
-            operation: "history",
-            id: Number(containerId),
-          }),
-        }),
-        api<{ workInstances: WorkInstance[] }>(INSTANCES_ENDPOINT, {
+      const instancesData = await api<{ workInstances: WorkInstance[] }>(
+        INSTANCES_ENDPOINT,
+        {
           method: "POST",
           body: JSON.stringify({
             operation: "list",
             projectId: Number(projectId),
             workContainerId: Number(containerId),
           }),
-        }),
-      ]);
-      setHistory(historyData.history ?? []);
+        }
+      );
       setInstances(instancesData.workInstances ?? []);
     } catch (err) {
       const key = err instanceof ApiError ? err.serverKey : null;
@@ -139,13 +134,27 @@ const WorkAreaContainerDetail = () => {
             </div>
           ) : (
             <>
-              <div className="mb-2 flex flex-wrap items-center gap-3">
-                <h1 className="text-3xl font-bold tracking-tight text-foreground">
-                  {container.title || container.identifier}
-                </h1>
-                <span className="font-mono text-sm text-muted-foreground">
-                  {container.identifier}
-                </span>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-3xl font-bold tracking-tight text-foreground">
+                    {container.title || container.identifier}
+                  </h1>
+                  <span className="font-mono text-sm text-muted-foreground">
+                    {container.identifier}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    navigate(
+                      `/work-area/${projectId}/work-containers/${containerId}/history`
+                    )
+                  }
+                >
+                  <History className="h-4 w-4" />
+                  {t("wa.history")}
+                </Button>
               </div>
 
               <div className="mb-8 rounded-lg border bg-card p-5 shadow-sm">
@@ -238,46 +247,6 @@ const WorkAreaContainerDetail = () => {
                   </div>
                 )}
               </div>
-
-              <h2 className="mb-3 text-xl font-semibold text-foreground">
-                {t("wa.history")}
-              </h2>
-              {history.length === 0 ? (
-                <p className="mb-8 text-sm text-muted-foreground">
-                  {t("wa.historyEmpty")}
-                </p>
-              ) : (
-                <table className="mb-8 w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-2 py-2">{t("wa.historyAction")}</th>
-                      <th className="px-2 py-2">{t("wa.historyUser")}</th>
-                      <th className="px-2 py-2">{t("wa.historyFields")}</th>
-                      <th className="px-2 py-2">{t("wa.historyWhen")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.map((entry, index) => (
-                      <tr key={index} className="border-b">
-                        <td className="px-2 py-2 font-medium text-foreground">
-                          {entry.action === "created"
-                            ? t("wa.historyCreated")
-                            : t("wa.historyUpdated")}
-                        </td>
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {formatUser(entry.user)}
-                        </td>
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {entry.changedFields.join(", ") || "—"}
-                        </td>
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {formatDate(entry.at)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
 
               <h2 className="mb-3 text-xl font-semibold text-foreground">
                 {t("wa.linkedInstances")} ({instances.length})

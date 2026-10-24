@@ -135,7 +135,7 @@ const WorkAreaInstanceNew = () => {
     progressWorkflow,
     userRoles,
     form?.progress ?? "",
-    "create"
+    form?.mode === "create" ? "create" : "update"
   );
 
   return (
@@ -144,7 +144,9 @@ const WorkAreaInstanceNew = () => {
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-4xl">
           <h1 className="mb-6 text-3xl font-bold tracking-tight text-foreground">
-            {t("wa.newInstanceTitle")}
+            {form?.mode === "update"
+              ? t("wa.editInstanceTitle")
+              : t("wa.newInstanceTitle")}
           </h1>
 
           {error && (
@@ -182,8 +184,17 @@ const WorkAreaInstanceNew = () => {
               progressEnabled={progressWorkflow !== null}
               busy={busy}
               setBusy={setBusy}
-              onSaved={() => {
-                navigate(workspaceBack);
+              onSaved={(savedId) => {
+                // Stay on the page: the form becomes the update form of
+                // the newly created instance so the user can keep working
+                // on it instead of being sent back to the workspace list.
+                if (savedId) {
+                  setForm((f) =>
+                    f ? { ...f, mode: "update", id: savedId } : f
+                  );
+                } else {
+                  navigate(workspaceBack);
+                }
               }}
               onCancel={() => {
                 navigate(workspaceBack);

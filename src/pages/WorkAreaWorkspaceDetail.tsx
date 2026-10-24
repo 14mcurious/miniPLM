@@ -432,12 +432,29 @@ const WorkAreaWorkspaceDetail = () => {
                           payload.operation = "update";
                           payload.id = formMode.id;
                         }
-                        await api(CONTAINERS_ENDPOINT, {
+                        const data = await api<{
+                          workContainer?: { id: number };
+                        }>(CONTAINERS_ENDPOINT, {
                           method: "POST",
                           body: JSON.stringify(payload),
                         });
                         toast.success(t("wa.containerSaved"));
-                        closeForm();
+                        if (formMode.mode === "create") {
+                          const createdId = data?.workContainer?.id;
+                          // Keep the user in the editing context: after
+                          // creation the form becomes the update form of
+                          // the new container, so further saves are
+                          // updates (never duplicates). If the id is
+                          // missing for any reason, fall back to closing.
+                          if (createdId != null) {
+                            setFormMode({ mode: "update", id: createdId });
+                          } else {
+                            closeForm();
+                          }
+                        }
+                        // The form stays open on success so the user can
+                        // keep working on the container; the Cancel button
+                        // closes it explicitly.
                         await load();
                       } catch (err) {
                         setFormError(translate(err));
@@ -673,7 +690,9 @@ const WorkAreaWorkspaceDetail = () => {
                       busy={editBusy}
                       setBusy={setEditBusy}
                       onSaved={() => {
-                        setEditForm(null);
+                        // Keep the edit form open on success: the user
+                        // stays in the editing context and can keep
+                        // working on the instance; Cancel closes it.
                         void load();
                       }}
                       onCancel={() => setEditForm(null)}

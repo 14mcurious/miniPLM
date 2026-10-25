@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route } from "react-router-dom";
-import { I18nProvider } from "@/i18n";
+import { I18nProvider, useI18n } from "@/i18n";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { warmWorkAreaActions } from "@/lib/warmup";

@@ -305,6 +305,7 @@
   "auth.otpPlaceholder": "Codice a 6 cifre",
   "auth.verify": "Verifica",
   "auth.back": "Indietro",
+  "auth.sessionLost": "La sessione è scaduta o non è più valida (ad esempio perché hai effettuato un nuovo accesso da un altro browser o scheda). Effettua di nuovo l'accesso.",
   "session.expiryTitle": "La sessione sta per scadere",
   "session.expiryBody": "Vuoi prolungare la sessione? Tempo rimanente:",
   "session.expiryExtend": "Prolunga la sessione",

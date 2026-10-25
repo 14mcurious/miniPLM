@@ -45,6 +45,14 @@ interface AuthState {
   expiresAt: number;
   /** Unix seconds: moment when the extension prompt must be shown. */
   warningAt: number;
+  /**
+   * Why the previous session was lost, so the login page can explain the
+   * redirect instead of dropping the user on a bare form:
+   * "rejected" = the backend no longer knows the stored token (expired,
+   * revoked, replaced by a newer login), "expired" = natural TTL end, null =
+   * no session was lost (fresh visit or explicit logout).
+   */
+  sessionLostReason: "rejected" | "expired" | null;
 }
 
 interface AuthContextValue extends AuthState {
@@ -75,6 +83,7 @@ const initialAuthState: AuthState = {
   workAreas: [],
   expiresAt: 0,
   warningAt: 0,
+  sessionLostReason: null,
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -121,27 +130,32 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   stateRef.current = state;
 
   // Force logout (token rejected server-side or naturally expired).
-  const forceLogout = useCallback(() => {
-    clearStoredToken();
-    setAuthHeaders(null, null);
-    setState((prev) => ({
-      ...prev,
-      status: "unauthenticated",
-      user: null,
-      isAdmin: false,
-      workAreas: [],
-      expiresAt: 0,
-      warningAt: 0,
-    }));
-    setSessionPrompt(false);
-    setSessionPromptDeclined(false);
-  }, []);
+  // ``reason`` feeds the login-page notice; manual logout passes no reason.
+  const forceLogout = useCallback(
+    (reason: "rejected" | "expired" | null = null) => {
+      clearStoredToken();
+      setAuthHeaders(null, null);
+      setState((prev) => ({
+        ...prev,
+        status: "unauthenticated",
+        user: null,
+        isAdmin: false,
+        workAreas: [],
+        expiresAt: 0,
+        warningAt: 0,
+        sessionLostReason: reason,
+      }));
+      setSessionPrompt(false);
+      setSessionPromptDeclined(false);
+    },
+    []
+  );
 
   // Any API call rejected with session/csrf errors => the session is dead.
   useEffect(() => {
     return onSessionInvalid(() => {
       if (stateRef.current.status === "authenticated") {
-        forceLogout();
+        forceLogout("rejected");
       }
     });
   }, [forceLogout]);
@@ -170,13 +184,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             workAreas: data.workAreas ?? [],
             expiresAt: data.expiresAt,
             warningAt: data.warningAt,
+            sessionLostReason: null,
           });
         } else {
-          forceLogout();
+          // The stored token is no longer known to the backend.
+          forceLogout("rejected");
         }
       })
       .catch(() => {
-        forceLogout();
+        // Network/gateway failure while validating: the previous session is
+        // lost as far as this browser is concerned.
+        forceLogout("rejected");
       });
   }, [forceLogout]);
 
@@ -189,7 +207,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const now = Math.floor(Date.now() / 1000);
       const { expiresAt, warningAt } = stateRef.current;
       if (now >= expiresAt) {
-        forceLogout();
+        forceLogout("expired");
         return;
       }
       if (now >= warningAt) {
@@ -231,6 +249,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       workAreas: data.workAreas ?? [],
       expiresAt: data.expiresAt,
       warningAt: data.warningAt,
+      sessionLostReason: null,
     });
     setSessionPrompt(false);
     setSessionPromptDeclined(false);

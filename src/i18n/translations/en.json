@@ -305,6 +305,7 @@
   "auth.otpPlaceholder": "6-digit code",
   "auth.verify": "Verify",
   "auth.back": "Back",
+  "auth.sessionLost": "Your session has expired or is no longer valid (for example because you signed in again from another browser or tab). Please sign in again.",
   "session.expiryTitle": "Session expiring soon",
   "session.expiryBody": "Do you want to extend the session? Time remaining:",
   "session.expiryExtend": "Extend session",

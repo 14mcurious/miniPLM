@@ -14,7 +14,7 @@ const fieldErrorClass = "mt-1 text-sm text-destructive";
 const Login = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const { status, login, verifyOtp } = useAuth();
+  const { status, login, verifyOtp, sessionLostReason } = useAuth();
 
   const [step, setStep] = useState<Step>("credentials");
   const [loginName, setLoginName] = useState("");
@@ -81,6 +81,15 @@ const Login = () => {
         <h1 className="mb-6 text-center text-4xl font-bold tracking-tight text-foreground">
           {t("home.title")}
         </h1>
+
+        {sessionLostReason && (
+          <div
+            role="status"
+            className="mb-4 rounded-md border border-amber-500/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/90 dark:text-amber-100"
+          >
+            {t("auth.sessionLost")}
+          </div>
+        )}
 
         <div className="rounded-lg border bg-card p-6 shadow-sm">
           {step === "credentials" ? (

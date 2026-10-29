@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -346,10 +345,6 @@ const SecuritySettings = () => {
   if (loading) {
     return (
       <>
-        <BackLink
-          to="/administration/configuration"
-          label={t("configuration.title")}
-        />
         <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
           <div className="w-full max-w-xl">
             <p className="text-sm text-muted-foreground">
@@ -363,10 +358,6 @@ const SecuritySettings = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/configuration"
-        label={t("configuration.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-xl space-y-6">
           <div>

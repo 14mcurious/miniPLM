@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import ChangeEmailSection from "@/pages/profile/ChangeEmailSection";
@@ -28,7 +27,6 @@ const Profile = () => {
 
   return (
     <>
-      <BackLink to="/" label={t("home.title")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-2xl space-y-6">
           <div>

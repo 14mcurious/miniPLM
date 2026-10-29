@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import BackLink from "@/components/BackLink";
 import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import CustomTypesManager from "@/pages/config/CustomTypesManager";
@@ -14,10 +13,6 @@ const CustomTypesConfiguration = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/configuration"
-        label={t("configuration.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-xl space-y-6">
           <div className="flex items-start justify-between gap-4">
@@ -30,8 +25,8 @@ const CustomTypesConfiguration = () => {
               </p>
             </div>
             <Button asChild variant="outline" size="sm">
-              <Link to="/administration/configuration">
-                {t("configuration.title")}
+              <Link to="/administration">
+                {t("administration.title")}
               </Link>
             </Button>
           </div>

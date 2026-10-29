@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
-import BackLink from "@/components/BackLink";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -170,10 +169,6 @@ const WorkInstanceTemplates = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/configuration"
-        label={t("configuration.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-5xl">
           <div className="mb-4 flex items-center justify-between gap-4">

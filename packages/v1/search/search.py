@@ -9,7 +9,9 @@ Configuration area. Results are ordered by the "updated" field in
 descending order (most recent first) and are paginated: by default the
 first 100 matches are returned and the client can request further pages
 with offset/limit until the reachable cap is exhausted.
-Work spaces are not part of the search.
+Work spaces are not part of the search. An optional workspaceId restricts
+the search to that work space and its descendant work spaces (the
+workspace must belong to an accessible project).
 
 Supported query syntax (subset of Lucene):
   word                 full-text match over title/description/etc.
@@ -381,6 +383,30 @@ def accessible_project_ids(cur, user_id):
     return [row[0] for row in cur.fetchall()]
 
 
+def workspace_project_id(cur, workspace_id):
+    """Project owning the work space, or None when it does not exist."""
+    cur.execute(
+        'SELECT project_id FROM "MiniPLM"."workspaces" WHERE id = %s',
+        (workspace_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def workspace_subtree(cur, workspace_id):
+    """The work space and all of its descendant work spaces (ids)."""
+    cur.execute(
+        'WITH RECURSIVE ws_tree AS ('
+        '  SELECT id FROM "MiniPLM"."workspaces" WHERE id = %s'
+        '  UNION ALL'
+        '  SELECT w.id FROM "MiniPLM"."workspaces" w'
+        '  JOIN ws_tree t ON w.parent_id = t.id'
+        ') SELECT id FROM ws_tree',
+        (workspace_id,),
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
 def user_display(cur, user_id):
     if user_id is None:
         return ""
@@ -392,21 +418,33 @@ def user_display(cur, user_id):
     return row[0] if row else ""
 
 
-def build_documents(cur, project_ids):
+def build_documents(cur, project_ids, workspace_ids=None):
     """Flatten the accessible elements into searchable documents.
 
     Work spaces are intentionally excluded: the search tables present
-    work containers and work instances only.
+    work containers and work instances only. When workspace_ids is
+    given, only the elements of those work spaces (the requested work
+    space plus its descendants) are returned.
     """
     placeholders = ",".join(["%s"] * len(project_ids))
     docs = []
+    if workspace_ids is None:
+        scope = f" WHERE c.project_id IN ({placeholders})"
+        scope_args = tuple(project_ids)
+    else:
+        ws_ph = ",".join(["%s"] * len(workspace_ids))
+        scope = (
+            f" WHERE c.project_id IN ({placeholders})"
+            f" AND c.workspace_id IN ({ws_ph})"
+        )
+        scope_args = (*project_ids, *workspace_ids)
 
     cur.execute(
         'SELECT c.id, c.identifier, c.title, c.description, c.progress,'
         ' c.author_id, c.updated_at'
         ' FROM "MiniPLM"."work_containers" c'
-        f' WHERE c.project_id IN ({placeholders})',
-        tuple(project_ids),
+        + scope,
+        scope_args,
     )
     for (
         container_id, identifier, title, description,
@@ -426,13 +464,26 @@ def build_documents(cur, project_ids):
             }
         )
 
+    if workspace_ids is None:
+        inst_scope = f" WHERE i.project_id IN ({placeholders})"
+        inst_args = tuple(project_ids)
+    else:
+        ws_ph = ",".join(["%s"] * len(workspace_ids))
+        inst_scope = (
+            f" WHERE i.project_id IN ({placeholders})"
+            " AND i.work_container_id IN ("
+            '  SELECT c2.id FROM "MiniPLM"."work_containers" c2'
+            f"  WHERE c2.workspace_id IN ({ws_ph})"
+            ")"
+        )
+        inst_args = (*project_ids, *workspace_ids)
     cur.execute(
         'SELECT i.id, i.instance_id, i.title, i.progress, i.assignees,'
         ' i.author_id, i.updated_at, t.name, i.fields'
         ' FROM "MiniPLM"."work_instances" i'
         ' LEFT JOIN "MiniPLM"."work_instance_templates" t ON t.id = i.template_id'
-        f' WHERE i.project_id IN ({placeholders})',
-        tuple(project_ids),
+        + inst_scope,
+        inst_args,
     )
     for (
         instance_db_id, instance_id, title, progress, assignees,
@@ -520,6 +571,13 @@ def do_search(ctx, session, data):
             project_scope = int(raw_project)
         except (TypeError, ValueError):
             return fail("search.error.invalidQuery")
+    raw_workspace = data.get("workspaceId", data.get("workspace_id"))
+    workspace_scope = None
+    if raw_workspace not in (None, ""):
+        try:
+            workspace_scope = int(raw_workspace)
+        except (TypeError, ValueError):
+            return fail("search.error.invalidQuery")
 
     try:
         offset = int(data.get("offset", 0))
@@ -553,7 +611,13 @@ def do_search(ctx, session, data):
             if project_scope not in project_ids:
                 return fail("forbidden")
             project_ids = [project_scope]
-        documents = build_documents(cur, project_ids)
+        workspace_ids = None
+        if workspace_scope is not None:
+            owning = workspace_project_id(cur, workspace_scope)
+            if owning is None or owning not in project_ids:
+                return fail("forbidden")
+            workspace_ids = workspace_subtree(cur, workspace_scope)
+        documents = build_documents(cur, project_ids, workspace_ids)
         columns = merged_columns(load_columns(cur))
 
     # Default ordering: "updated" descending (most recent first). The

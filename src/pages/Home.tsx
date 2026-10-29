@@ -28,9 +28,6 @@ const Home = () => {
             <Link to="/administration">{t("home.administration")}</Link>
           </Button>
         )}
-        <Button asChild size="lg" variant="secondary">
-          <Link to="/profile">{t("profile.open")}</Link>
-        </Button>
         <Button asChild size="lg">
           <Link to="/work-area">{t("home.workArea")}</Link>
         </Button>

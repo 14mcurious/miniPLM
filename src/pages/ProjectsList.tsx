@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n";
-import BackLink from "@/components/BackLink";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -116,12 +115,18 @@ const ProjectsList = () => {
 
   return (
     <>
-      <BackLink to="/administration/projects" label={t("projects.title")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-3xl">
-          <h1 className="mb-6 text-4xl font-bold tracking-tight text-foreground">
-            {t("projectsList.title")}
-          </h1>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <h1 className="text-4xl font-bold tracking-tight text-foreground">
+              {t("projectsList.title")}
+            </h1>
+            <Button asChild size="sm">
+              <Link to="/administration/projects/new-project">
+                {t("projects.newProject")}
+              </Link>
+            </Button>
+          </div>
 
           {maxSubprojectLevels !== null && (
             <p className="mb-4 text-sm text-muted-foreground">

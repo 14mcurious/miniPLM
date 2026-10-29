@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n";
-import BackLink from "@/components/BackLink";
 import { Input } from "@/components/ui/input";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "sonner";
@@ -83,12 +83,18 @@ const GroupsList = () => {
 
   return (
     <>
-      <BackLink to="/administration/groups" label={t("groups.title")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-4xl">
-          <h1 className="mb-6 text-4xl font-bold tracking-tight text-foreground">
-            {t("groupsList.title")}
-          </h1>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <h1 className="text-4xl font-bold tracking-tight text-foreground">
+              {t("groupsList.title")}
+            </h1>
+            <Button asChild size="sm">
+              <Link to="/administration/groups/new-group">
+                {t("groups.newGroup")}
+              </Link>
+            </Button>
+          </div>
 
           <div className="mb-4 max-w-md">
             <label

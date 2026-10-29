@@ -3,18 +3,22 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, Link } from "react-router-dom";
 import { I18nProvider, useI18n } from "@/i18n";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import {
+  WorkAreaProjectProvider,
+  useWorkAreaProject,
+} from "@/hooks/useWorkAreaProject";
 import { warmWorkAreaActions } from "@/lib/warmup";
 import RequireAuth from "@/components/RequireAuth";
 import RequireAdmin from "@/components/RequireAdmin";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
-import Administration from "./pages/Administration";
+import AdministrationLayout from "./pages/AdministrationLayout";
 import WorkArea from "./pages/WorkArea";
-import WorkAreaProject from "./pages/WorkAreaProject";
+import WorkAreaLayout from "./components/WorkAreaLayout";
 import WorkAreaWorkspaces from "./pages/WorkAreaWorkspaces";
 import WorkAreaWorkspaceDetail from "./pages/WorkAreaWorkspaceDetail";
 import WorkAreaContainerDetail from "./pages/WorkAreaContainerDetail";
@@ -22,19 +26,15 @@ import WorkAreaInstanceNew from "./pages/WorkAreaInstanceNew";
 import WorkAreaInstanceDetail from "./pages/WorkAreaInstanceDetail";
 import WorkInstanceTemplates from "./pages/WorkInstanceTemplates";
 import WorkAreaSearch from "./pages/WorkAreaSearch";
-import Users from "./pages/Users";
 import UsersList from "./pages/UsersList";
 import NewUser from "./pages/NewUser";
 import UserEdit from "./pages/UserEdit";
-import Groups from "./pages/Groups";
 import GroupsList from "./pages/GroupsList";
 import NewGroup from "./pages/NewGroup";
 import GroupEdit from "./pages/GroupEdit";
-import Projects from "./pages/Projects";
 import ProjectsList from "./pages/ProjectsList";
 import NewProject from "./pages/NewProject";
 import ProjectEdit from "./pages/ProjectEdit";
-import Configuration from "./pages/Configuration";
 import CustomTypesConfiguration from "./pages/CustomTypesConfiguration";
 import WorkflowConfiguration from "./pages/WorkflowConfiguration";
 import WorkflowRoles from "./pages/WorkflowRoles";
@@ -83,18 +83,126 @@ const WorkAreaWarmup = () => {
   return null;
 };
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <I18nProvider>
-      <AuthProvider>
-        <WorkAreaWarmup />
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <div className="fixed right-4 top-3 z-50">
-            <LanguageSwitcher />
-          </div>
-          <HashRouter>
+/**
+ * Monochromatic user icon: a single-color outline drawn with currentColor
+ * so it inherits the control's text color (no multi-color artwork).
+ */
+const UserIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.8}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className="h-5 w-5"
+  >
+    <circle cx="12" cy="8" r="3.5" />
+    <path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" />
+  </svg>
+);
+
+/**
+ * Monochromatic stylized house icon: a single outline drawn with
+ * currentColor so it inherits one color from the surrounding control.
+ * Shared home shortcut: this is the single place it is rendered.
+ */
+const HouseIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.8}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className="h-5 w-5"
+  >
+    <path d="M3 10.5 12 3l9 7.5" />
+    <path d="M5.5 9.2V21h13V9.2" />
+    <path d="M10 21v-6h4v6" />
+  </svg>
+);
+
+/**
+ * Monochromatic stylized folder icon: a single outline drawn with
+ * currentColor so it inherits one color from the surrounding control.
+ */
+const ProjectIcon = () => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.8}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className="h-5 w-5"
+  >
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+  </svg>
+);
+
+/**
+ * Fixed top-right controls, rendered inside the auth provider. The home
+ * shortcut is always visible (one click back to the product home, also
+ * from the login page); the project and profile shortcuts are shown only
+ * while a session is active. Both sit at the left of the language
+ * selection box.
+ */
+const TopControls = () => {
+  const { t } = useI18n();
+  const { status } = useAuth();
+  const { openPicker } = useWorkAreaProject();
+  return (
+    <div className="fixed right-4 top-3 z-50 flex items-center gap-2">
+      {status === "authenticated" && (
+        <button
+          type="button"
+          onClick={openPicker}
+          aria-label={t("wa.projectPicker.choose")}
+          title={t("wa.projectPicker.choose")}
+          className="flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <ProjectIcon />
+        </button>
+      )}
+      <Link
+        to="/"
+        aria-label={t("administration.homeButton")}
+        title={t("administration.homeButton")}
+        className="flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <HouseIcon />
+      </Link>
+      {status === "authenticated" && (
+        <Link
+          to="/profile"
+          aria-label={t("profile.open")}
+          title={t("profile.open")}
+          className="flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <UserIcon />
+        </Link>
+      )}
+      <LanguageSwitcher />
+    </div>
+  );
+};
+
+const App = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <AuthProvider>
+          <WorkAreaProjectProvider>
+          <WorkAreaWarmup />
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <HashRouter>
+              <TopControls />
             <Routes>
               {/* Public: login flow (the only public entry). */}
               <Route path="/login" element={<Login />} />
@@ -118,209 +226,113 @@ const App = () => (
                 }
               />
 
-              {/* Administration area: SysAdmin members only. */}
+              {/* Administration area: SysAdmin members only. The layout
+                  owns the expandable left menu; each nested route renders
+                  the selected page in the right pane. */}
               <Route
                 path="/administration"
                 element={
                   <RequireAdmin>
-                    <Administration />
+                    <AdministrationLayout />
                   </RequireAdmin>
                 }
-              />
-              <Route
-                path="/administration/users"
-                element={
-                  <RequireAdmin>
-                    <Users />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/users/users-list"
-                element={
-                  <RequireAdmin>
-                    <UsersList />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/users/new-user"
-                element={
-                  <RequireAdmin>
-                    <NewUser />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/users/user-edit/:userId"
-                element={
-                  <RequireAdmin>
-                    <UserEdit />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/groups"
-                element={
-                  <RequireAdmin>
-                    <Groups />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/groups/groups-list"
-                element={
-                  <RequireAdmin>
-                    <GroupsList />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/groups/new-group"
-                element={
-                  <RequireAdmin>
-                    <NewGroup />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/groups/group-edit/:groupId"
-                element={
-                  <RequireAdmin>
-                    <GroupEdit />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/projects"
-                element={
-                  <RequireAdmin>
-                    <Projects />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/projects/projects-list"
-                element={
-                  <RequireAdmin>
-                    <ProjectsList />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/projects/new-project"
-                element={
-                  <RequireAdmin>
-                    <NewProject />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/projects/project-edit/:projectId"
-                element={
-                  <RequireAdmin>
-                    <ProjectEdit />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration"
-                element={
-                  <RequireAdmin>
-                    <Configuration />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow"
-                element={
-                  <RequireAdmin>
-                    <WorkflowConfiguration />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow/roles"
-                element={
-                  <RequireAdmin>
-                    <WorkflowRoles />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow/role-lists"
-                element={
-                  <RequireAdmin>
-                    <WorkflowRoleLists />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow/progress-types"
-                element={
-                  <RequireAdmin>
-                    <WorkflowProgressTypes />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow/progress-types/new"
-                element={
-                  <RequireAdmin>
-                    <WorkflowProgressTypeEdit />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/workflow/progress-types/:typeId/edit"
-                element={
-                  <RequireAdmin>
-                    <WorkflowProgressTypeEdit />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/custom-types"
-                element={
-                  <RequireAdmin>
-                    <CustomTypesConfiguration />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/search-columns"
-                element={
-                  <RequireAdmin>
-                    <SearchColumnsConfiguration />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/templates"
-                element={
-                  <RequireAdmin>
-                    <WorkInstanceTemplates />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/security"
-                element={
-                  <RequireAdmin>
-                    <SecuritySettings />
-                  </RequireAdmin>
-                }
-              />
-              <Route
-                path="/administration/configuration/project"
-                element={
-                  <RequireAdmin>
-                    <ProjectSettings />
-                  </RequireAdmin>
-                }
-              />
+              >
+                <Route
+                  index
+                  element={
+                    <Navigate to="/administration/users/users-list" replace />
+                  }
+                />
+                <Route
+                  path="users/users-list"
+                  element={<UsersList />}
+                />
+                <Route path="users/new-user" element={<NewUser />} />
+                <Route
+                  path="users/user-edit/:userId"
+                  element={<UserEdit />}
+                />
+                <Route
+                  path="groups/groups-list"
+                  element={<GroupsList />}
+                />
+                <Route path="groups/new-group" element={<NewGroup />} />
+                <Route
+                  path="groups/group-edit/:groupId"
+                  element={<GroupEdit />}
+                />
+                <Route
+                  path="projects/projects-list"
+                  element={<ProjectsList />}
+                />
+                <Route
+                  path="projects/new-project"
+                  element={<NewProject />}
+                />
+                <Route
+                  path="projects/project-edit/:projectId"
+                  element={<ProjectEdit />}
+                />
+                <Route
+                  path="projects/project-settings"
+                  element={<ProjectSettings />}
+                />
+                <Route
+                  path="configuration/workflow"
+                  element={<WorkflowConfiguration />}
+                />
+                <Route
+                  path="configuration/workflow/roles"
+                  element={<WorkflowRoles />}
+                />
+                <Route
+                  path="configuration/workflow/role-lists"
+                  element={<WorkflowRoleLists />}
+                />
+                <Route
+                  path="configuration/workflow/progress-types"
+                  element={<WorkflowProgressTypes />}
+                />
+                <Route
+                  path="configuration/workflow/progress-types/new"
+                  element={<WorkflowProgressTypeEdit />}
+                />
+                <Route
+                  path="configuration/workflow/progress-types/:typeId/edit"
+                  element={<WorkflowProgressTypeEdit />}
+                />
+                <Route
+                  path="configuration/custom-types"
+                  element={<CustomTypesConfiguration />}
+                />
+                <Route
+                  path="configuration/search-columns"
+                  element={<SearchColumnsConfiguration />}
+                />
+                <Route
+                  path="configuration/templates"
+                  element={<WorkInstanceTemplates />}
+                />
+                <Route
+                  path="configuration/security"
+                  element={<SecuritySettings />}
+                />
+                {/* Legacy URL: project settings moved under Projects. */}
+                <Route
+                  path="configuration/project"
+                  element={
+                    <Navigate
+                      to="/administration/projects/project-settings"
+                      replace
+                    />
+                  }
+                />
+              </Route>
 
-              {/* Work Area: session + per-project access enforced. */}
+              {/* Work Area: session + per-project access enforced. The
+                  layout provides the side panel (project header and
+                  work space tree); the index route redirects to the
+                  project search (compatibility with the old hub). */}
               <Route
                 path="/work-area"
                 element={
@@ -333,68 +345,38 @@ const App = () => (
                 path="/work-area/:projectId"
                 element={
                   <RequireAuth>
-                    <WorkAreaProject />
+                    <WorkAreaLayout />
                   </RequireAuth>
                 }
-              />
-              <Route
-                path="/work-area/:projectId/workspaces"
-                element={
-                  <RequireAuth>
-                    <WorkAreaWorkspaces />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/workspaces/:workspaceId"
-                element={
-                  <RequireAuth>
-                    <WorkAreaWorkspaceDetail />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/workspaces/:workspaceId/work-instances/new"
-                element={
-                  <RequireAuth>
-                    <WorkAreaInstanceNew />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/work-containers/:containerId"
-                element={
-                  <RequireAuth>
-                    <WorkAreaContainerDetail />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/work-containers/:containerId/history"
-                element={
-                  <RequireAuth>
+              >
+                <Route index element={<Navigate to="search" replace />} />
+                <Route path="search" element={<WorkAreaSearch />} />
+                <Route path="workspaces" element={<WorkAreaWorkspaces />} />
+                <Route
+                  path="workspaces/:workspaceId"
+                  element={<WorkAreaWorkspaceDetail />}
+                />
+                <Route
+                  path="workspaces/:workspaceId/work-instances/new"
+                  element={<WorkAreaInstanceNew />}
+                />
+                <Route
+                  path="work-containers/:containerId"
+                  element={<WorkAreaContainerDetail />}
+                />
+                <Route
+                  path="work-containers/:containerId/history"
+                  element={
                     <Suspense fallback={<LazyRouteFallback />}>
                       <WorkAreaContainerHistory />
                     </Suspense>
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/work-instances/:instanceId"
-                element={
-                  <RequireAuth>
-                    <WorkAreaInstanceDetail />
-                  </RequireAuth>
-                }
-              />
-              <Route
-                path="/work-area/:projectId/search"
-                element={
-                  <RequireAuth>
-                    <WorkAreaSearch />
-                  </RequireAuth>
-                }
-              />
+                  }
+                />
+                <Route
+                  path="work-instances/:instanceId"
+                  element={<WorkAreaInstanceDetail />}
+                />
+              </Route>
 
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route
@@ -408,9 +390,11 @@ const App = () => (
             </Routes>
           </HashRouter>
         </TooltipProvider>
+      </WorkAreaProjectProvider>
       </AuthProvider>
     </I18nProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;

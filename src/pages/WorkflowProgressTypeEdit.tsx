@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import BackLink from "@/components/BackLink";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -157,10 +156,6 @@ const WorkflowProgressTypeEdit = () => {
 
   return (
     <>
-      <BackLink
-        to={LIST_ROUTE}
-        label={t("workflowProgressTypes.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-5xl space-y-6">
           <div>

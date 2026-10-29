@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import BackLink from "@/components/BackLink";
 import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 
@@ -41,10 +40,6 @@ const WorkflowConfiguration = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/configuration"
-        label={t("configuration.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-xl space-y-6">
           <div>

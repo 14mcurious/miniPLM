@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
-import BackLink from "@/components/BackLink";
 import { HistoryEntry, UserRef, WorkContainer } from "@/lib/types";
 
 const CONTAINERS_ENDPOINT = "/api/my/v1/work-containers";
@@ -97,22 +96,9 @@ const WorkAreaContainerHistory = () => {
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
-  const backTo = `/work-area/${projectId}/work-containers/${containerId}`;
-
   return (
-    <>
-      <BackLink
-        to={backTo}
-        label={
-          container?.title ||
-          container?.identifier ||
-          containerId ||
-          t("wa.workContainers")
-        }
-      />
-      <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-4xl">
-          {loading ? (
+    <div className="w-full max-w-4xl">
+      {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
           ) : notFound || !container ? (
             <div
@@ -176,9 +162,7 @@ const WorkAreaContainerHistory = () => {
               )}
             </>
           )}
-        </div>
-      </div>
-    </>
+    </div>
   );
 };
 

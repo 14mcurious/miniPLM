@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import BackLink from "@/components/BackLink";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -213,7 +212,6 @@ const NewUser = () => {
 
   return (
     <>
-      <BackLink to="/administration/users" label={t("users.title")} />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-xl">
           <h1 className="mb-6 text-4xl font-bold tracking-tight text-foreground">
@@ -451,7 +449,7 @@ const NewUser = () => {
                 {t("newUser.changePassword")}
               </Button>
               <Button asChild type="button" variant="outline">
-                <Link to="/administration/users">
+                <Link to="/administration/users/users-list">
                   {t("newUser.backToUsers")}
                 </Link>
               </Button>

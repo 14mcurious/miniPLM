@@ -85,17 +85,33 @@ def require_session(ctx, args):
 
 
 def accessible_projects(cur, user_id):
-    """Projects reachable through the user's enabled groups (deduplicated)."""
+    """Projects reachable through the user's enabled groups (deduplicated),
+    with the fields needed to render the project tree (parent and level).
+    """
     cur.execute(
-        'SELECT DISTINCT p.id, p.name FROM "MiniPLM"."projects" p'
+        'SELECT DISTINCT p.id, p.name, p.identifier, p.parent_id, p.level,'
+        ' pp.name AS parent_name'
+        ' FROM "MiniPLM"."projects" p'
         ' JOIN "MiniPLM"."group_projects" gp ON gp.project_name = p.name'
         ' JOIN "MiniPLM"."user_groups" ug ON ug.group_id = gp.group_id'
         ' JOIN "MiniPLM"."groups" g ON g.id = ug.group_id'
+        ' LEFT JOIN "MiniPLM"."projects" pp ON pp.id = p.parent_id'
         " WHERE ug.user_id = %s AND g.is_disabled = FALSE"
         " ORDER BY p.name",
         (user_id,),
     )
-    return [{"id": row[0], "name": row[1]} for row in cur.fetchall()]
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "identifier": row[2],
+            "parentId": row[3],
+            "level": int(row[4]),
+            "parentName": row[5],
+            "isRoot": row[3] is None,
+        }
+        for row in cur.fetchall()
+    ]
 
 
 # --- Work area operations ---------------------------------------------------

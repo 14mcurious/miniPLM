@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
-import { progressLabel } from "@/lib/workflow-progress";
-import BackLink from "@/components/BackLink";
+import { allowedProgressOptions, progressLabel } from "@/lib/workflow-progress";
 import FieldValue from "@/components/FieldValue";
+import InstanceForm from "@/components/InstanceForm";
 import { Button } from "@/components/ui/button";
 import {
+  CUSTOM_TYPES_ENDPOINT,
+  TEMPLATES_ENDPOINT,
+  toFormValue,
+  type FormState,
+} from "@/lib/work-instance-form";
+import {
+  CustomType,
+  InstanceTemplate,
   UserRef,
   WorkContainer,
   WorkInstance,
@@ -37,12 +45,15 @@ const WorkAreaInstanceDetail = () => {
   }>();
   const { status } = useAuth();
   const { can } = useProjectModes(projectId);
-  const navigate = useNavigate();
 
   const [instance, setInstance] = useState<WorkInstance | null>(null);
-  const [containerWorkspaceId, setContainerWorkspaceId] = useState<
-    number | null
-  >(null);
+  const [containers, setContainers] = useState<WorkContainer[]>([]);
+  const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [templates, setTemplates] = useState<InstanceTemplate[]>([]);
+  const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
+  const [users, setUsers] = useState<UserRef[]>([]);
+  const [editing, setEditing] = useState<FormState | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -64,24 +75,22 @@ const WorkAreaInstanceDetail = () => {
           body: JSON.stringify({ operation: "get", id: Number(instanceId) }),
         }),
         projectId
-          ? api<{ workContainers: WorkContainer[] }>(CONTAINERS_ENDPOINT, {
+          ? api<{
+              workContainers: WorkContainer[];
+              userRoles: string[];
+            }>(CONTAINERS_ENDPOINT, {
               method: "POST",
               body: JSON.stringify({
                 operation: "list",
                 projectId: Number(projectId),
               }),
             })
-          : Promise.resolve({ workContainers: [] }),
+          : Promise.resolve({ workContainers: [], userRoles: [] }),
       ]);
       const foundInstance = data.workInstance ?? null;
       setInstance(foundInstance);
-      if (foundInstance) {
-        const container = containersData.workContainers?.find(
-          (item) =>
-            String(item.id) === String(foundInstance.workContainerId)
-        );
-        setContainerWorkspaceId(container?.workspaceId ?? null);
-      }
+      setContainers(containersData.workContainers ?? []);
+      setUserRoles(containersData.userRoles ?? []);
     } catch (err) {
       const key = err instanceof ApiError ? err.serverKey : null;
       if (
@@ -108,19 +117,61 @@ const WorkAreaInstanceDetail = () => {
 
   const base = `/work-area/${projectId}`;
 
+  // Open the inline edit form (update mode): the form data (templates,
+  // custom types, users) is fetched on demand so the detail page stays
+  // light when no edit is started.
+  const openEdit = async () => {
+    if (!instance) return;
+    try {
+      const [templatesData, customTypesData, instancesData] =
+        await Promise.all([
+          api<{ templates: InstanceTemplate[] }>(TEMPLATES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "list",
+              projectId: Number(projectId),
+            }),
+          }),
+          api<{ customTypes: CustomType[] }>(CUSTOM_TYPES_ENDPOINT),
+          api<{ users: UserRef[] }>(INSTANCES_ENDPOINT, {
+            method: "POST",
+            body: JSON.stringify({
+              operation: "list",
+              projectId: Number(projectId),
+            }),
+          }),
+        ]);
+      setTemplates(templatesData.templates ?? []);
+      setCustomTypes(customTypesData.customTypes ?? []);
+      setUsers(instancesData.users ?? []);
+      const fieldValues: Record<string, unknown> = {};
+      for (const field of instance.fields) {
+        fieldValues[field.name] = toFormValue(field);
+      }
+      setEditing({
+        mode: "update",
+        id: instance.id,
+        title: instance.title,
+        workContainerId: String(instance.workContainerId),
+        templateId: instance.templateId ? String(instance.templateId) : "",
+        progress: instance.progress ?? "",
+        assigneeIds: instance.assigneeIds ?? [],
+        fieldValues,
+      });
+    } catch (err) {
+      toast.error(translate(err));
+    }
+  };
+
+  const editTemplate = editing
+    ? templates.find(
+        (template) => String(template.id) === editing.templateId
+      ) ?? null
+    : null;
+
   return (
-    <>
-      <BackLink
-        to={
-          containerWorkspaceId != null
-            ? `${base}/workspaces/${containerWorkspaceId}`
-            : `${base}/workspaces`
-        }
-        label={t("wa.workspace")}
-      />
-      <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-4xl">
-          {loading ? (
+    <div className="w-full max-w-4xl">
+      {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
           ) : notFound || !instance ? (
             <div
@@ -148,6 +199,34 @@ const WorkAreaInstanceDetail = () => {
                   {instance.workContainerTitle}
                 </Link>
               </p>
+
+              {editing && (
+                <div className="mb-8">
+                  <InstanceForm
+                    form={editing}
+                    setForm={setEditing}
+                    projectId={projectId ?? ""}
+                    containers={containers}
+                    templates={templates}
+                    customTypes={customTypes}
+                    users={users}
+                    progressOptions={allowedProgressOptions(
+                      editTemplate?.progressWorkflow ?? null,
+                      userRoles,
+                      editing.progress,
+                      "update"
+                    )}
+                    progressEnabled={editTemplate?.progressWorkflow != null}
+                    busy={editBusy}
+                    setBusy={setEditBusy}
+                    onSaved={() => {
+                      setEditing(null);
+                      void load();
+                    }}
+                    onCancel={() => setEditing(null)}
+                  />
+                </div>
+              )}
 
               <div className="mb-8 rounded-lg border bg-card p-5 shadow-sm">
                 <dl className="grid gap-4 sm:grid-cols-2">
@@ -222,13 +301,7 @@ const WorkAreaInstanceDetail = () => {
                 {can("U") && (
                   <Button
                     variant="outline"
-                    onClick={() =>
-                      navigate(
-                        containerWorkspaceId != null
-                          ? `${base}/workspaces/${containerWorkspaceId}?edit=${instance.id}`
-                          : `${base}/workspaces`
-                      )
-                    }
+                    onClick={() => void openEdit()}
                   >
                     {t("wa.edit")}
                   </Button>
@@ -263,9 +336,7 @@ const WorkAreaInstanceDetail = () => {
               )}
             </>
           )}
-        </div>
-      </div>
-    </>
+    </div>
   );
 };
 

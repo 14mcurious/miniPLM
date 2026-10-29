@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import BackLink from "@/components/BackLink";
 import OtpStep from "@/components/OtpStep";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
@@ -227,10 +226,6 @@ const UserEdit = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/users/users-list"
-        label={t("usersList.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-xl">
           <h1 className="mb-2 text-4xl font-bold tracking-tight text-foreground">

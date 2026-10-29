@@ -4,7 +4,6 @@ import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
-import BackLink from "@/components/BackLink";
 import InstanceForm from "@/components/InstanceForm";
 import { allowedProgressOptions } from "@/lib/workflow-progress";
 import {
@@ -139,10 +138,7 @@ const WorkAreaInstanceNew = () => {
   );
 
   return (
-    <>
-      <BackLink to={workspaceBack} label={t("wa.workspaces")} />
-      <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-4xl">
+    <div className="min-w-0 max-w-4xl">
           <h1 className="mb-6 text-3xl font-bold tracking-tight text-foreground">
             {form?.mode === "update"
               ? t("wa.editInstanceTitle")
@@ -201,9 +197,7 @@ const WorkAreaInstanceNew = () => {
               }}
             />
           ) : null}
-        </div>
-      </div>
-    </>
+    </div>
   );
 };
 

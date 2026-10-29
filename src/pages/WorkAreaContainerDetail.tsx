@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
-import { History } from "lucide-react";
+import { History, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
+import { useProjectModes } from "@/hooks/usePermissions";
 import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
-import BackLink from "@/components/BackLink";
 import FieldValue from "@/components/FieldValue";
+import ContainerForm from "@/components/ContainerForm";
 import { Button } from "@/components/ui/button";
 import {
   UserRef,
@@ -38,10 +39,12 @@ const WorkAreaContainerDetail = () => {
     containerId: string;
   }>();
   const { status } = useAuth();
+  const { can } = useProjectModes(projectId);
   const navigate = useNavigate();
 
   const [container, setContainer] = useState<WorkContainer | null>(null);
   const [instances, setInstances] = useState<WorkInstance[]>([]);
+  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -113,17 +116,9 @@ const WorkAreaContainerDetail = () => {
 
   if (status === "unauthenticated") return <Navigate to="/login" replace />;
 
-  const backTo =
-    container?.workspaceId != null
-      ? `/work-area/${projectId}/workspaces/${container.workspaceId}`
-      : `/work-area/${projectId}/workspaces`;
-
   return (
-    <>
-      <BackLink to={backTo} label={t("wa.workspace")} />
-      <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
-        <div className="w-full max-w-4xl">
-          {loading ? (
+    <div className="min-w-0 max-w-4xl">
+      {loading ? (
             <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
           ) : notFound || !container ? (
             <div
@@ -143,19 +138,45 @@ const WorkAreaContainerDetail = () => {
                     {container.identifier}
                   </span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    navigate(
-                      `/work-area/${projectId}/work-containers/${containerId}/history`
-                    )
-                  }
-                >
-                  <History className="h-4 w-4" />
-                  {t("wa.history")}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {can("U") && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditing((value) => !value)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      {t("wa.edit")}
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(
+                        `/work-area/${projectId}/work-containers/${containerId}/history`
+                      )
+                    }
+                  >
+                    <History className="h-4 w-4" />
+                    {t("wa.history")}
+                  </Button>
+                </div>
               </div>
+
+              {editing && (
+                <div className="mb-8">
+                  <ContainerForm
+                    projectId={Number(projectId)}
+                    container={container}
+                    onSaved={() => {
+                      setEditing(false);
+                      void load();
+                    }}
+                    onCancel={() => setEditing(false)}
+                  />
+                </div>
+              )}
 
               <div className="mb-8 rounded-lg border bg-card p-5 shadow-sm">
                 <dl className="grid gap-4 sm:grid-cols-2">
@@ -299,9 +320,7 @@ const WorkAreaContainerDetail = () => {
               )}
             </>
           )}
-        </div>
-      </div>
-    </>
+    </div>
   );
 };
 

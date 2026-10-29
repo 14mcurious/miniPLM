@@ -1,5 +1,4 @@
 import { Button } from "@/components/ui/button";
-import BackLink from "@/components/BackLink";
 import { useI18n } from "@/i18n";
 import { Link } from "react-router-dom";
 import RoleListsManager from "@/pages/config/RoleListsManager";
@@ -13,10 +12,6 @@ const WorkflowRoleLists = () => {
 
   return (
     <>
-      <BackLink
-        to="/administration/configuration/workflow"
-        label={t("workflowConfig.title")}
-      />
       <div className="flex min-h-screen justify-center bg-background p-4 pt-14">
         <div className="w-full max-w-5xl space-y-6">
           <div className="flex items-start justify-between gap-4">

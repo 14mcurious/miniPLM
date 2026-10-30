@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import { progressLabel } from "@/lib/workflow-progress";
 import FieldValue from "@/components/FieldValue";
 import ContainerForm from "@/components/ContainerForm";
+import TemplateIcon from "@/components/TemplateIcon";
 import { Button } from "@/components/ui/button";
 import {
   UserRef,
@@ -131,6 +132,12 @@ const WorkAreaContainerDetail = () => {
             <>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
+                  {container.templateIconName && (
+                    <TemplateIcon
+                      name={container.templateIconName}
+                      className="h-6 w-6"
+                    />
+                  )}
                   <h1 className="text-3xl font-bold tracking-tight text-foreground">
                     {container.title || container.identifier}
                   </h1>
@@ -293,12 +300,19 @@ const WorkAreaContainerDetail = () => {
                           {instance.instanceId}
                         </td>
                         <td className="px-2 py-2 font-medium text-foreground">
-                          <Link
-                            to={`/work-area/${projectId}/work-instances/${instance.id}`}
-                            className="hover:underline"
-                          >
-                            {instance.title}
-                          </Link>
+                          <span className="flex items-center gap-2">
+                            {instance.templateIconName && (
+                              <TemplateIcon
+                                name={instance.templateIconName}
+                              />
+                            )}
+                            <Link
+                              to={`/work-area/${projectId}/work-instances/${instance.id}`}
+                              className="hover:underline"
+                            >
+                              {instance.title}
+                            </Link>
+                          </span>
                         </td>
                         <td className="px-2 py-2 text-muted-foreground">
                           <span

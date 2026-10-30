@@ -24,7 +24,13 @@ def main(args, ctx=None):
         )
         row = cur.fetchone()
         if not row:
-            return {"ok": False, "error": "work container WC-000023 not found"}
+            # The target container is gone (deleted through the app): the
+            # test artifact cannot exist anymore, so the cleanup is done.
+            return {
+                "ok": True,
+                "removed": False,
+                "detail": "work container WC-000023 not found; nothing to do",
+            }
         container_id, raw_fields = row
         fields = raw_fields
         if isinstance(fields, str):

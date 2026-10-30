@@ -483,7 +483,7 @@ def validate_fields(cur, fields):
 INSTANCE_SELECT = (
     "SELECT i.id, i.instance_id, i.title, i.project_id, p.name,"
     " i.work_container_id, c.identifier, c.title,"
-    " i.template_id, t.name, i.progress, i.assignees, i.fields,"
+    " i.template_id, t.name, t.icon_name, i.progress, i.assignees, i.fields,"
     " u.login_name, u.name, u.surname, i.created_at, i.updated_at"
     ' FROM "MiniPLM"."work_instances" i'
     ' JOIN "MiniPLM"."projects" p ON p.id = i.project_id'
@@ -555,7 +555,7 @@ def instance_row_to_dict(row):
     (
         instance_db_id, instance_id, title, project_id, project_name,
         container_id, container_identifier, container_title,
-        template_id, template_name, progress, assignees, fields,
+        template_id, template_name, template_icon, progress, assignees, fields,
         author_login, author_name, author_surname, created_at, updated_at,
     ) = row
     assignee_ids = assignees if isinstance(assignees, list) else []
@@ -570,6 +570,7 @@ def instance_row_to_dict(row):
         "workContainerTitle": container_title,
         "templateId": template_id,
         "templateName": template_name,
+        "templateIconName": str(template_icon).strip() if template_icon else None,
         "progress": progress,
         "progressWorkflow": None,
         "assigneeIds": [int(x) for x in assignee_ids],

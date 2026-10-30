@@ -441,14 +441,15 @@ def build_documents(cur, project_ids, workspace_ids=None):
 
     cur.execute(
         'SELECT c.id, c.identifier, c.title, c.description, c.progress,'
-        ' c.author_id, c.updated_at'
+        ' c.author_id, c.updated_at, t.icon_name'
         ' FROM "MiniPLM"."work_containers" c'
+        ' LEFT JOIN "MiniPLM"."work_instance_templates" t ON t.id = c.template_id'
         + scope,
         scope_args,
     )
     for (
         container_id, identifier, title, description,
-        progress, author_id, updated_at,
+        progress, author_id, updated_at, icon_name,
     ) in cur.fetchall():
         docs.append(
             {
@@ -459,6 +460,7 @@ def build_documents(cur, project_ids, workspace_ids=None):
                 "title": title or "",
                 "description": description or "",
                 "progress": progress or "",
+                "templateIcon": str(icon_name).strip() if icon_name else None,
                 "author": user_display(cur, author_id),
                 "updated": updated_at.isoformat() if updated_at else "",
             }
@@ -479,7 +481,7 @@ def build_documents(cur, project_ids, workspace_ids=None):
         inst_args = (*project_ids, *workspace_ids)
     cur.execute(
         'SELECT i.id, i.instance_id, i.title, i.progress, i.assignees,'
-        ' i.author_id, i.updated_at, t.name, i.fields'
+        ' i.author_id, i.updated_at, t.name, t.icon_name, i.fields'
         ' FROM "MiniPLM"."work_instances" i'
         ' LEFT JOIN "MiniPLM"."work_instance_templates" t ON t.id = i.template_id'
         + inst_scope,
@@ -487,7 +489,7 @@ def build_documents(cur, project_ids, workspace_ids=None):
     )
     for (
         instance_db_id, instance_id, title, progress, assignees,
-        author_id, updated_at, template_name, fields,
+        author_id, updated_at, template_name, icon_name, fields,
     ) in cur.fetchall():
         assignee_ids = assignees if isinstance(assignees, list) else []
         if assignee_ids:
@@ -509,6 +511,7 @@ def build_documents(cur, project_ids, workspace_ids=None):
             "progress": progress or "",
             "assignees": assignee_names,
             "template": template_name or "",
+            "templateIcon": str(icon_name).strip() if icon_name else None,
             "author": user_display(cur, author_id),
             "updated": updated_at.isoformat() if updated_at else "",
         }
@@ -638,6 +641,7 @@ def do_search(ctx, session, data):
             "category": doc["category"],
             "name": doc["name"],
             "title": doc.get("title", ""),
+            "templateIcon": doc.get("templateIcon"),
             "cells": {key: doc.get(key, "") for key in columns},
         }
         for doc in page

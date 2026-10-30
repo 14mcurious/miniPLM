@@ -33,6 +33,14 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // `mammoth` (Word import for HTML fields) requires Node built-ins at
+      // module load. They are only used for external file access, which is
+      // disabled and unreachable in the browser, so point them at no-op
+      // shims to keep the bundle browser-safe.
+      fs: path.resolve(__dirname, "./src/shims/node-fs.js"),
+      path: path.resolve(__dirname, "./src/shims/node-path.js"),
+      url: path.resolve(__dirname, "./src/shims/node-url.js"),
+      os: path.resolve(__dirname, "./src/shims/node-os.js"),
     },
   },
 };

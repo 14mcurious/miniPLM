@@ -9,6 +9,7 @@ import LanguageSwitcher from "@/components/LanguageSwitcher";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import {
   WorkAreaProjectProvider,
+  ProjectPickerHost,
   useWorkAreaProject,
 } from "@/hooks/useWorkAreaProject";
 import { warmWorkAreaActions } from "@/lib/warmup";
@@ -202,6 +203,9 @@ const App = () => {
             <Toaster />
             <Sonner />
             <HashRouter>
+              {/* Project picker dialog: inside the router so a confirmed
+                  selection navigates to the chosen project's work area. */}
+              <ProjectPickerHost />
               <TopControls />
             <Routes>
               {/* Public: login flow (the only public entry). */}

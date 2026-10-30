@@ -7,6 +7,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { useI18n } from "@/i18n";
 import { useAuth } from "./useAuth";
 import ProjectSelectDialog from "@/components/ProjectSelectDialog";
 
@@ -17,6 +20,10 @@ import ProjectSelectDialog from "@/components/ProjectSelectDialog";
  * sessions) and is always validated against the work areas the user can
  * actually access: if the stored project is no longer accessible it is
  * dropped and the work area starts with no project selected.
+ *
+ * The project picker dialog is rendered by {@link ProjectPickerHost},
+ * which lives inside the router so a confirmed selection can navigate to
+ * the selected project's work area from any page.
  */
 
 interface WorkAreaProjectContextValue {
@@ -24,8 +31,12 @@ interface WorkAreaProjectContextValue {
   projectId: number | null;
   /** Display name of the selected project, or null. */
   projectName: string | null;
-  /** Pick the current project (persisted for the user). */
-  selectProject: (projectId: number) => void;
+  /**
+   * Pick the current project (persisted for the user). Resolves to true
+   * when the selection was applied, false when the project is not
+   * accessible (the auth snapshot is re-checked live before deciding).
+   */
+  selectProject: (projectId: number) => Promise<boolean>;
   /** Clear the current project selection. */
   clearProject: () => void;
   /** Whether the project selection dialog is open. */
@@ -73,7 +84,7 @@ function removeStored(loginName: string): void {
 }
 
 export const WorkAreaProjectProvider = ({ children }: { children: ReactNode }) => {
-  const { status, user, workAreas } = useAuth();
+  const { status, user, workAreas, refreshWorkAreas } = useAuth();
   const [projectId, setProjectId] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
@@ -95,13 +106,22 @@ export const WorkAreaProjectProvider = ({ children }: { children: ReactNode }) =
   }, [status, user, workAreas]);
 
   const selectProject = useCallback(
-    (id: number) => {
-      if (!user) return;
-      if (!workAreas.some((area) => area.id === id)) return;
+    async (id: number): Promise<boolean> => {
+      if (!user) return false;
+      if (!workAreas.some((area) => area.id === id)) {
+        // The picker dialog lists the LIVE work areas while the auth
+        // context keeps the login-time snapshot: permissions may have
+        // changed since login, so re-check against the server before
+        // dropping a selection the user just confirmed (a silent drop
+        // would look like the choice "did nothing").
+        const fresh = await refreshWorkAreas();
+        if (!fresh.some((area) => area.id === id)) return false;
+      }
       setProjectId(id);
       writeStored(user.loginName, id);
+      return true;
     },
-    [user, workAreas]
+    [user, workAreas, refreshWorkAreas]
   );
 
   const clearProject = useCallback(() => {
@@ -130,14 +150,6 @@ export const WorkAreaProjectProvider = ({ children }: { children: ReactNode }) =
   return (
     <WorkAreaProjectContext.Provider value={value}>
       {children}
-      <ProjectSelectDialog
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onConfirm={(id) => {
-          selectProject(id);
-          setPickerOpen(false);
-        }}
-      />
     </WorkAreaProjectContext.Provider>
   );
 };
@@ -152,3 +164,39 @@ export function useWorkAreaProject(): WorkAreaProjectContextValue {
   }
   return ctx;
 }
+
+/**
+ * Host for the project picker dialog.
+ *
+ * It is mounted inside the router (the context provider itself sits
+ * outside it) so that after a confirmed selection the app navigates to
+ * the selected project's work area search page. Without that navigation
+ * the confirmed choice would only update the persisted selection and the
+ * visible page would keep showing the project the user was on before —
+ * the picker would appear to do nothing.
+ */
+export const ProjectPickerHost = () => {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const { pickerOpen, closePicker, selectProject } = useWorkAreaProject();
+
+  const handleConfirm = async (id: number) => {
+    const applied = await selectProject(id);
+    closePicker();
+    if (applied) {
+      navigate(`/work-area/${id}/search`, { replace: true });
+    } else {
+      toast.error(t("wa.projectPicker.notAccessible"));
+    }
+  };
+
+  return (
+    <ProjectSelectDialog
+      open={pickerOpen}
+      onClose={closePicker}
+      onConfirm={(id) => {
+        void handleConfirm(id);
+      }}
+    />
+  );
+};

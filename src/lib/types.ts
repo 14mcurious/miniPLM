@@ -34,6 +34,8 @@ export interface WorkContainer {
   progressWorkflow?: ProgressWorkflow | null;
   templateId: number | null;
   templateName: string | null;
+  /** Lucide icon name of the container template, if chosen. */
+  templateIconName?: string | null;
   fields: WorkInstanceField[];
   author: UserRef | null;
   createdAt: string | null;
@@ -74,6 +76,8 @@ export interface WorkInstance {
   workContainerTitle: string | null;
   templateId: number | null;
   templateName: string | null;
+  /** Lucide icon name of the instance template, if chosen. */
+  templateIconName?: string | null;
   progress: string | null;
   /** Workflow descriptor of the instance template's progress field, if any. */
   progressWorkflow?: ProgressWorkflow | null;
@@ -91,6 +95,8 @@ export interface InstanceTemplate {
   projectName: string;
   name: string;
   definition: FieldDef[];
+  /** Lucide icon name associated with the template (private gallery), or null. */
+  iconName?: string | null;
   /**
    * Resolved workflow descriptor of the template progress field (null when
    * the template has no progress field or the referenced type is disabled).
@@ -172,6 +178,8 @@ export interface SearchRow {
   dbId: string;
   category: string;
   title: string;
+  /** Lucide icon name of the element's template, if chosen. */
+  templateIcon?: string | null;
   cells: Record<string, unknown>;
 }
 

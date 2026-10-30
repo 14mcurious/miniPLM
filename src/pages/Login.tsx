@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useI18n } from "@/i18n";
@@ -14,7 +14,14 @@ const fieldErrorClass = "mt-1 text-sm text-destructive";
 const Login = () => {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const { status, login, verifyOtp, sessionLostReason } = useAuth();
+
+  // Destination requested before the auth redirect (set by RequireAuth in
+  // location.state.from). Always a relative in-app path; when absent the
+  // normal home landing applies.
+  const from = (location.state as { from?: string } | null)?.from ?? "";
+  const destination = from.startsWith("/") ? from : "/";
 
   const [step, setStep] = useState<Step>("credentials");
   const [loginName, setLoginName] = useState("");
@@ -26,9 +33,10 @@ const Login = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Already authenticated (e.g. reloaded on /login): go home.
+  // Already authenticated (e.g. reloaded on /login): back to the
+  // requested route, or home when there is none.
   if (status === "authenticated") {
-    return <Navigate to="/" replace />;
+    return <Navigate to={destination} replace />;
   }
 
   const showServerError = (err: unknown): string => {
@@ -67,7 +75,7 @@ const Login = () => {
     setBusy(true);
     try {
       await verifyOtp(loginName.trim(), otp.trim());
-      navigate("/", { replace: true });
+      navigate(destination, { replace: true });
     } catch (err) {
       setError(showServerError(err));
     } finally {

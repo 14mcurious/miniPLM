@@ -495,6 +495,7 @@ def container_row_to_dict(row):
         progress,
         template_id,
         template_name,
+        template_icon,
         fields,
         author_login,
         author_name,
@@ -516,6 +517,7 @@ def container_row_to_dict(row):
         "progressWorkflow": None,
         "templateId": template_id,
         "templateName": template_name,
+        "templateIconName": str(template_icon).strip() if template_icon else None,
         "fields": fields if isinstance(fields, list) else [],
         "author": (
             {
@@ -535,7 +537,7 @@ def container_row_to_dict(row):
 CONTAINER_SELECT = (
     "SELECT c.id, c.identifier, c.project_id, p.name, c.workspace_id, ws.name,"
     " c.title, c.description, c.progress,"
-    " c.template_id, t.name, c.fields,"
+    " c.template_id, t.name, t.icon_name, c.fields,"
     " u.login_name, u.name, u.surname, c.created_at, c.updated_at,"
     " (SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
     "  WHERE wi.work_container_id = c.id) AS instance_count"

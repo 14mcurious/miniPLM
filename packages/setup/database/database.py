@@ -169,6 +169,14 @@ STATEMENTS = [
         'CREATE UNIQUE INDEX IF NOT EXISTS template_name_uniq_idx'
         ' ON "MiniPLM"."work_instance_templates" (project_id, lower(name))'
     ),
+    # Optional icon (Lucide icon name) associated with a template: it is
+    # shown next to the title of every work instance / work container that
+    # uses the template (search lists and detail pages) so the element
+    # type is easy to recognise. NULL = no icon.
+    (
+        'ALTER TABLE "MiniPLM"."work_instance_templates"'
+        ' ADD COLUMN IF NOT EXISTS icon_name TEXT'
+    ),
     # Work instances: documents/files/entities belonging to a work container.
     # instance_id is the string id (WI-000001 style); fields is the JSON
     # array of {name, type, value, ...} entries; assignees is the JSON array

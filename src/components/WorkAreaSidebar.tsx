@@ -19,10 +19,33 @@ interface Node {
 }
 
 /**
- * Work area side panel: the current project header (with the project
- * switcher) and the tree of the project work spaces. Every work space can
- * be opened in its own view and offers create-child / edit / delete
- * actions according to the access modes of the user's groups.
+ * Rotating chevron indicating whether a section / branch is expanded
+ * (same indicator as the administration sidebar).
+ */
+const Chevron = ({ open }: { open: boolean }) => (
+  <svg
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    aria-hidden="true"
+    className={cn(
+      "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+      open && "rotate-90"
+    )}
+  >
+    <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+/**
+ * Work area side panel, with the same design as the administration
+ * sidebar: a full-height navigation column (bordered, muted background)
+ * with a header block for the current project (name link plus the project
+ * switcher / new work space actions) and an expandable "Work Spaces"
+ * section holding the work space tree. Every work space can be opened in
+ * its own view and offers create-child / edit / delete actions according
+ * to the access modes of the user's groups.
  */
 const WorkAreaSidebar = () => {
   const { t } = useI18n();
@@ -36,6 +59,7 @@ const WorkAreaSidebar = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [sectionOpen, setSectionOpen] = useState(true);
   const [formState, setFormState] = useState<
     | null
     | { mode: "create"; parentId: number | null; parentName: string | null }
@@ -141,7 +165,13 @@ const WorkAreaSidebar = () => {
     return match ? Number(match[1]) : null;
   }, [location.pathname, projectId]);
 
-  const renderNode = (node: Node, depth: number) => {
+  // Active when the project-wide (global) search page is shown: no work
+  // space is selected and the search route of the current project is open.
+  const isGlobalSearchActive =
+    activeWorkspaceId === null &&
+    location.pathname === `/work-area/${projectId}/search`;
+
+  const renderNode = (node: Node) => {
     const { workspace, children } = node;
     const expandable = children.length > 0;
     const expandedNode = expandable && isExpanded(workspace.id);
@@ -150,77 +180,78 @@ const WorkAreaSidebar = () => {
       <li key={workspace.id}>
         <div
           className={cn(
-            "rounded-md border px-2 py-1.5",
-            isActive
-              ? "border-primary bg-accent"
-              : "border-transparent hover:bg-muted"
+            "flex items-center gap-1 rounded-md transition-colors",
+            isActive ? "bg-accent" : "hover:bg-accent"
           )}
-          style={{ marginLeft: depth * 12 }}
         >
-          <div className="flex items-center gap-1">
-            {expandable ? (
-              <button
-                type="button"
-                onClick={() => toggleExpanded(workspace.id)}
-                aria-label={expandedNode ? t("wa.collapse") : t("wa.expand")}
-                className="w-5 shrink-0 text-center text-muted-foreground hover:text-foreground"
-              >
-                {expandedNode ? "▾" : "▸"}
-              </button>
-            ) : (
-              <span className="w-5 shrink-0" aria-hidden="true" />
-            )}
-            <Link
-              to={`/work-area/${projectId}/workspaces/${workspace.id}`}
-              className={cn(
-                "min-w-0 flex-1 truncate text-sm hover:underline",
-                isActive
-                  ? "font-semibold text-accent-foreground"
-                  : "font-medium text-foreground"
-              )}
-              title={workspace.title ? `${workspace.name} — ${workspace.title}` : workspace.name}
+          {expandable ? (
+            <button
+              type="button"
+              onClick={() => toggleExpanded(workspace.id)}
+              aria-label={expandedNode ? t("wa.collapse") : t("wa.expand")}
+              aria-expanded={expandedNode}
+              className="flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
             >
-              {workspace.name}
-            </Link>
-          </div>
-          {(can("C") || can("U") || can("D")) && (
-            <div className="mt-1 ml-5 flex flex-wrap gap-1">
-              {can("C") && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-xs"
-                  onClick={() => openCreate(workspace.id, workspace.name)}
-                >
-                  {t("wa.newChild")}
-                </Button>
-              )}
-              {can("U") && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-xs"
-                  onClick={() => openUpdate(workspace)}
-                >
-                  {t("wa.edit")}
-                </Button>
-              )}
-              {can("D") && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-xs"
-                  onClick={() => void deleteWorkspace(workspace)}
-                >
-                  {t("wa.delete")}
-                </Button>
-              )}
-            </div>
+              <Chevron open={expandedNode} />
+            </button>
+          ) : (
+            <span className="w-5 shrink-0" aria-hidden="true" />
           )}
+          <Link
+            to={`/work-area/${projectId}/workspaces/${workspace.id}`}
+            aria-current={isActive ? "page" : undefined}
+            className={cn(
+              "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:text-accent-foreground",
+              isActive && "font-medium text-accent-foreground"
+            )}
+            title={
+              workspace.title
+                ? `${workspace.name} — ${workspace.title}`
+                : workspace.name
+            }
+          >
+            {workspace.name}
+          </Link>
         </div>
+
+        {(can("C") || can("U") || can("D")) && (
+          <div className="ml-5 flex flex-wrap gap-1 pb-1">
+            {can("C") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => openCreate(workspace.id, workspace.name)}
+              >
+                {t("wa.newChild")}
+              </Button>
+            )}
+            {can("U") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => openUpdate(workspace)}
+              >
+                {t("wa.edit")}
+              </Button>
+            )}
+            {can("D") && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 px-2 text-xs"
+                onClick={() => void deleteWorkspace(workspace)}
+              >
+                {t("wa.delete")}
+              </Button>
+            )}
+          </div>
+        )}
+
         {expandedNode && (
-          <ul className="mt-1 space-y-0.5">
-            {children.map((child) => renderNode(child, depth + 1))}
+          <ul className="mt-1 space-y-0.5 border-l pl-2 ml-4">
+            {children.map((child) => renderNode(child))}
           </ul>
         )}
       </li>
@@ -228,21 +259,20 @@ const WorkAreaSidebar = () => {
   };
 
   return (
-    <aside
-      aria-label={t("wa.workspaces")}
-      className="w-full shrink-0 lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:self-start lg:overflow-y-auto"
+    <nav
+      aria-label={t("workArea.title")}
+      className="sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-y-auto border-r bg-muted/30"
     >
-      <div className="rounded-lg border bg-card p-4 shadow-sm">
+      <div className="border-b px-4 py-4">
         {project ? (
           <>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              {t("wa.sidebar.currentProject", { name: project.name })}
-            </p>
-            <div className="mt-1">
-              <h2 className="text-lg font-semibold text-foreground">
-                {project.name}
-              </h2>
-            </div>
+            <Link
+              to={`/work-area/${projectId}/search`}
+              className="block text-lg font-semibold tracking-tight text-foreground hover:underline"
+              title={t("wa.projectPicker.choose")}
+            >
+              {project.name}
+            </Link>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -268,33 +298,66 @@ const WorkAreaSidebar = () => {
             {t("workArea.noAccess")}
           </p>
         )}
-
-        <hr className="my-4 border-border" />
-
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            {t("wa.workspaces")}
-          </h3>
-        </div>
-
-        {error && (
-          <div
-            role="alert"
-            className="mb-2 rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            {error}
-          </div>
-        )}
-        {loading ? (
-          <p className="text-sm text-muted-foreground">{t("wa.loading")}</p>
-        ) : !error && workspaces.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("wa.empty")}</p>
-        ) : (
-          <ul className="space-y-0.5" role="tree" aria-label={t("wa.workspaces")}>
-            {tree.map((node) => renderNode(node, 0))}
-          </ul>
-        )}
       </div>
+
+      <ul className="flex-1 space-y-1 p-2">
+        {project && (
+          <li>
+            <Link
+              to={`/work-area/${projectId}/search`}
+              aria-current={isGlobalSearchActive ? "page" : undefined}
+              className={cn(
+                "flex items-center rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+                isGlobalSearchActive &&
+                  "bg-accent font-medium text-accent-foreground"
+              )}
+            >
+              {t("wa.globalSearch")}
+            </Link>
+          </li>
+        )}
+        <li>
+          <button
+            type="button"
+            onClick={() => setSectionOpen((prev) => !prev)}
+            aria-expanded={sectionOpen}
+            className="flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <span>{t("wa.workspaces")}</span>
+            <Chevron open={sectionOpen} />
+          </button>
+
+          {sectionOpen && (
+            <ul className="mt-1 space-y-0.5 border-l pl-2 ml-4">
+              {error && (
+                <li>
+                  <div
+                    role="alert"
+                    className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                  >
+                    {error}
+                  </div>
+                </li>
+              )}
+              {loading ? (
+                <li>
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    {t("wa.loading")}
+                  </p>
+                </li>
+              ) : !error && workspaces.length === 0 ? (
+                <li>
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    {t("wa.empty")}
+                  </p>
+                </li>
+              ) : (
+                tree.map((node) => renderNode(node))
+              )}
+            </ul>
+          )}
+        </li>
+      </ul>
 
       <WorkspaceFormDialog
         open={formState !== null}
@@ -316,7 +379,7 @@ const WorkAreaSidebar = () => {
           void load();
         }}
       />
-    </aside>
+    </nav>
   );
 };
 

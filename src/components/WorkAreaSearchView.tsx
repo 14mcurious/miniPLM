@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { ExternalLink } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import TemplateIcon from "@/components/TemplateIcon";
 import { SearchRow } from "@/lib/types";
 
 const SEARCH_ENDPOINT = "/api/my/v1/search";
@@ -72,7 +74,13 @@ const WorkAreaSearchView = ({
   const { status } = useAuth();
   const navigate = useNavigate();
 
-  const [query, setQuery] = useState("");
+  // The query lives in the URL (?q=...) so that a round trip to a detail
+  // page (or a reopened tab) restores the exact search, and the search
+  // itself becomes shareable by URL. The input box mirrors the URL.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialQuery = searchParams.get("q") ?? "";
+
+  const [query, setQuery] = useState(initialQuery);
   const [rows, setRows] = useState<SearchRow[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
@@ -167,19 +175,38 @@ const WorkAreaSearchView = ({
 
   useEffect(() => {
     if (status === "authenticated") {
-      void runSearch("");
+      setQuery(initialQuery);
+      void runSearch(initialQuery);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, runSearch]);
+  }, [status, initialQuery, runSearch]);
 
   const base = `/work-area/${projectId}`;
 
+  const rowUrl = (row: SearchRow) =>
+    row.category === "workcontainer"
+      ? `${base}/work-containers/${row.dbId}`
+      : `${base}/work-instances/${row.dbId}`;
+
   const goToRow = (row: SearchRow) => {
-    if (row.category === "workcontainer") {
-      navigate(`${base}/work-containers/${row.dbId}`);
-    } else {
-      navigate(`${base}/work-instances/${row.dbId}`);
+    navigate(rowUrl(row));
+  };
+
+  const submitSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextQuery = query.trim();
+    if (nextQuery === initialQuery) {
+      // Same query (e.g. re-running after new data): no URL change, just
+      // refresh the results.
+      setQuery(nextQuery);
+      void runSearch(nextQuery);
+      return;
     }
+    const next = new URLSearchParams(searchParams);
+    if (nextQuery) next.set("q", nextQuery);
+    else next.delete("q");
+    // The effect above re-runs the search when the URL query changes.
+    setSearchParams(next);
   };
 
   return (
@@ -190,10 +217,7 @@ const WorkAreaSearchView = ({
 
       <form
         className="mb-4 flex flex-wrap gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void runSearch(query);
-        }}
+        onSubmit={submitSearch}
       >
         <div className="min-w-64 flex-1">
           <label htmlFor="search-query" className="sr-only">
@@ -259,24 +283,59 @@ const WorkAreaSearchView = ({
                       if (key === "id") {
                         return (
                           <td key={key} className="px-3 py-2">
-                            <button
-                              type="button"
-                              className="text-left font-medium text-foreground hover:underline"
-                              title={row.title}
-                              onClick={() => goToRow(row)}
-                            >
-                              {row.id}
-                            </button>
+                            <span className="flex items-center gap-2">
+                              {row.templateIcon && (
+                                <TemplateIcon name={row.templateIcon} />
+                              )}
+                              <button
+                                type="button"
+                                className="text-left font-medium text-foreground hover:underline"
+                                title={row.title}
+                                onClick={() => goToRow(row)}
+                              >
+                                {row.id}
+                              </button>
+                            </span>
                           </td>
                         );
                       }
                       if (key === "title") {
+                        const url = rowUrl(row);
                         return (
-                          <td
-                            key={key}
-                            className="px-3 py-2 text-muted-foreground"
-                          >
-                            {row.title || "—"}
+                          <td key={key} className="px-3 py-2">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {row.templateIcon && (
+                                <TemplateIcon
+                                  name={row.templateIcon}
+                                  className="shrink-0"
+                                />
+                              )}
+                              <span className="flex min-w-0 items-center gap-1">
+                                <Link
+                                  to={url}
+                                  className="min-w-0 truncate font-medium text-foreground hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                                >
+                                  {row.title || "—"}
+                                </Link>
+                                <a
+                                  href={`#${url}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  aria-label={t("wa.searchOpenNewTab", {
+                                    title: row.title || row.id,
+                                  })}
+                                  title={t("wa.searchOpenNewTab", {
+                                    title: row.title || row.id,
+                                  })}
+                                  className="shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-accent-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
+                                >
+                                  <ExternalLink
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                </a>
+                              </span>
+                            </span>
                           </td>
                         );
                       }

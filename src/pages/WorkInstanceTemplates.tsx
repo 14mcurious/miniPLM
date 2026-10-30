@@ -6,6 +6,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import IconPickerDialog from "@/components/IconPickerDialog";
+import TemplateIcon from "@/components/TemplateIcon";
 import {
   CustomType,
   FieldDef,
@@ -45,6 +47,10 @@ const WorkInstanceTemplates = () => {
   const [projectId, setProjectId] = useState<string>("");
   const [name, setName] = useState("");
   const [fields, setFields] = useState<FieldDef[]>([]);
+  // Icon (Lucide name from the private gallery) associated with the
+  // template: "" = no icon.
+  const [iconName, setIconName] = useState<string>("");
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   // Workflow progress type bound to the template progress field ("") when
   // the template has no progress field.
   const [progressType, setProgressType] = useState<string>("");
@@ -96,6 +102,8 @@ const WorkInstanceTemplates = () => {
     setProjectId(projects.length === 1 ? String(projects[0].id) : "");
     setName("");
     setFields([]);
+    setIconName("");
+    setIconPickerOpen(false);
     setProgressType("");
     setFormError(null);
   };
@@ -103,6 +111,8 @@ const WorkInstanceTemplates = () => {
   const openUpdate = (template: InstanceTemplate) => {
     setFormMode({ mode: "update", id: template.id, project: template.projectName });
     setName(template.name);
+    setIconName(template.iconName ?? "");
+    setIconPickerOpen(false);
     setFields(
       template.definition
         .filter((def) => def.type !== "progress")
@@ -122,6 +132,7 @@ const WorkInstanceTemplates = () => {
 
   const closeForm = () => {
     setFormMode(null);
+    setIconPickerOpen(false);
     setFormError(null);
   };
 
@@ -237,6 +248,7 @@ const WorkInstanceTemplates = () => {
                   const payload: Record<string, unknown> = {
                     name: name.trim(),
                     definition,
+                    iconName: iconName.trim(),
                   };
                   if (formMode.mode === "create") {
                     payload.operation = "create";
@@ -304,6 +316,42 @@ const WorkInstanceTemplates = () => {
                   onChange={(e) => setName(e.target.value)}
                   disabled={busy}
                 />
+              </div>
+
+              <div>
+                <span className={labelClass}>{t("wa.templateIcon")}</span>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIconPickerOpen(true)}
+                    disabled={busy}
+                    className="flex h-10 w-40 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                    aria-label={t("wa.templateIconChoose")}
+                  >
+                    {iconName ? (
+                      <TemplateIcon name={iconName} className="h-5 w-5" />
+                    ) : (
+                      <span className="inline-block h-5 w-5 shrink-0 rounded-sm border border-dashed border-muted-foreground" aria-hidden="true" />
+                    )}
+                    <span className="truncate">
+                      {iconName || t("wa.templateIconNone")}
+                    </span>
+                  </button>
+                  {iconName && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => setIconName("")}
+                    >
+                      {t("wa.templateIconClear")}
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t("wa.templateIconHint")}
+                </p>
               </div>
 
               <div className="rounded-md border p-3">
@@ -502,7 +550,10 @@ const WorkInstanceTemplates = () => {
                 {templates.map((template) => (
                   <tr key={template.id} className="border-b hover:bg-muted/40">
                     <td className="px-2 py-2 font-medium text-foreground">
-                      {template.name}
+                      <span className="flex items-center gap-2">
+                        <TemplateIcon name={template.iconName} />
+                        {template.name}
+                      </span>
                     </td>
                     <td className="px-2 py-2 text-muted-foreground">
                       {template.projectName}
@@ -550,6 +601,15 @@ const WorkInstanceTemplates = () => {
               </tbody>
             </table>
           )}
+          <IconPickerDialog
+            open={iconPickerOpen && formMode !== null}
+            onClose={() => setIconPickerOpen(false)}
+            selected={iconName || null}
+            onSelect={(choice) => {
+              setIconName(choice ?? "");
+              setIconPickerOpen(false);
+            }}
+          />
         </div>
       </div>
     </>

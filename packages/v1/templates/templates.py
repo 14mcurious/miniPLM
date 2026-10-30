@@ -15,7 +15,26 @@ import time
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 ]{0,79}$")
 FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,63}$")
+# Lucide icon name (PascalCase, letters and digits only, e.g. "FileText");
+# the private icon gallery bundled with the app offers exactly this set.
+ICON_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")
 ALLOWED_TYPES = ("number", "date", "string", "attachment", "html", "md", "xml", "custom", "progress")
+
+
+def normalize_icon_name(raw):
+    """Normalize the submitted icon name: None/empty clears the icon.
+
+    Returns the validated name, None for "no icon", or the fail payload
+    when the name is malformed.
+    """
+    if raw is None:
+        return None
+    name = str(raw).strip()
+    if not name:
+        return None
+    if not ICON_NAME_RE.match(name):
+        return fail("templates.error.iconName")
+    return name
 
 
 def redis_key(ctx, name):
@@ -275,6 +294,7 @@ def template_to_dict(row, cur):
         project_name,
         name,
         definition,
+        icon_name,
         created_at,
         updated_at,
         used_by,
@@ -286,6 +306,7 @@ def template_to_dict(row, cur):
         "projectName": project_name,
         "name": name,
         "definition": definition,
+        "iconName": (str(icon_name).strip() if icon_name else None),
         "progressWorkflow": template_progress_workflow(cur, definition),
         "createdAt": created_at.isoformat() if created_at else None,
         "updatedAt": updated_at.isoformat() if updated_at else None,
@@ -295,7 +316,7 @@ def template_to_dict(row, cur):
 
 TEMPLATE_SELECT = (
     "SELECT t.id, t.project_id, p.name, t.name, t.definition,"
-    " t.created_at, t.updated_at,"
+    " t.icon_name, t.created_at, t.updated_at,"
     " ((SELECT COUNT(*) FROM \"MiniPLM\".\"work_instances\" wi"
     "   WHERE wi.template_id = t.id)"
     "  + (SELECT COUNT(*) FROM \"MiniPLM\".\"work_containers\" wc"
@@ -348,6 +369,9 @@ def do_create(ctx, session, data):
         definition, error = validate_definition(cur, data.get("definition"))
         if error is not None:
             return error
+        icon = normalize_icon_name(data.get("iconName", data.get("icon_name")))
+        if isinstance(icon, dict):
+            return icon
         cur.execute(
             'SELECT 1 FROM "MiniPLM"."work_instance_templates"'
             " WHERE project_id = %s AND lower(name) = lower(%s)",
@@ -357,8 +381,8 @@ def do_create(ctx, session, data):
             return fail("templates.error.nameTaken")
         cur.execute(
             'INSERT INTO "MiniPLM"."work_instance_templates"'
-            " (project_id, name, definition) VALUES (%s, %s, %s)",
-            (project_id, name, json.dumps(definition)),
+            " (project_id, name, definition, icon_name) VALUES (%s, %s, %s, %s)",
+            (project_id, name, json.dumps(definition), icon),
         )
         cur.execute(
             'SELECT currval(%s::regclass)',
@@ -400,6 +424,11 @@ def do_update(ctx, session, data):
         name = str(data.get("name") or "").strip() or current_name
         if not NAME_RE.match(name):
             return fail("templates.error.nameFormat")
+        icon = None
+        if "iconName" in data or "icon_name" in data:
+            icon = normalize_icon_name(data.get("iconName", data.get("icon_name")))
+            if isinstance(icon, dict):
+                return icon
         definition = None
         if "definition" in data:
             definition, error = validate_definition(cur, data["definition"])
@@ -412,6 +441,13 @@ def do_update(ctx, session, data):
                 (template_id,),
             )
             definition = cur.fetchone()[0]
+        if icon is None and "icon_name" not in data and "iconName" not in data:
+            cur.execute(
+                'SELECT icon_name FROM "MiniPLM"."work_instance_templates"'
+                " WHERE id = %s",
+                (template_id,),
+            )
+            icon = cur.fetchone()[0]
         cur.execute(
             'SELECT 1 FROM "MiniPLM"."work_instance_templates"'
             " WHERE project_id = %s AND lower(name) = lower(%s) AND id <> %s",
@@ -421,9 +457,9 @@ def do_update(ctx, session, data):
             return fail("templates.error.nameTaken")
         cur.execute(
             'UPDATE "MiniPLM"."work_instance_templates"'
-            " SET name = %s, definition = %s, updated_at = now()"
+            " SET name = %s, definition = %s, icon_name = %s, updated_at = now()"
             " WHERE id = %s",
-            (name, json.dumps(definition), template_id),
+            (name, json.dumps(definition), icon, template_id),
         )
     ctx.POSTGRESQL.commit()
 

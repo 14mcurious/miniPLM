@@ -67,6 +67,12 @@ interface AuthContextValue extends AuthState {
   verifyOtp: (loginName: string, otp: string) => Promise<void>;
   /** Extend the current session by one full configured duration. */
   extend: () => Promise<void>;
+  /**
+   * Re-fetch the accessible work areas through the `me` endpoint and
+   * replace the (login-time) snapshot in the context. Returns the fresh
+   * list (empty when the session is invalid).
+   */
+  refreshWorkAreas: () => Promise<WorkAreaRef[]>;
   /** End the current session (server-side + local). */
   logout: () => Promise<void>;
   /** True while the "session expiring" modal prompt is visible. */
@@ -288,6 +294,29 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setSessionPromptDeclined(true);
   }, []);
 
+  const refreshWorkAreas = useCallback(async (): Promise<WorkAreaRef[]> => {
+    try {
+      const data = await api<any>(AUTH_ENDPOINT, {
+        method: "POST",
+        body: JSON.stringify({ operation: "me" }),
+      });
+      if (data?.ok) {
+        const areas: WorkAreaRef[] = data.workAreas ?? [];
+        setState((prev) => ({
+          ...prev,
+          workAreas: areas,
+          expiresAt: data.expiresAt ?? prev.expiresAt,
+          warningAt: data.warningAt ?? prev.warningAt,
+        }));
+        return areas;
+      }
+    } catch {
+      // Session rejected / gone: the api helper reports it to the global
+      // session-invalid listener, which forces the logout.
+    }
+    return [];
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,
@@ -295,6 +324,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       verifyOtp,
       extend,
       logout,
+      refreshWorkAreas,
       sessionPrompt,
       sessionPromptDeclined,
       declineSessionPrompt,
@@ -305,6 +335,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       verifyOtp,
       extend,
       logout,
+      refreshWorkAreas,
       sessionPrompt,
       sessionPromptDeclined,
       declineSessionPrompt,

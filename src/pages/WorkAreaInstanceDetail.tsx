@@ -8,6 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import { allowedProgressOptions, progressLabel } from "@/lib/workflow-progress";
 import FieldValue from "@/components/FieldValue";
 import InstanceForm from "@/components/InstanceForm";
+import TemplateIcon from "@/components/TemplateIcon";
 import { Button } from "@/components/ui/button";
 import {
   CUSTOM_TYPES_ENDPOINT,
@@ -183,6 +184,12 @@ const WorkAreaInstanceDetail = () => {
           ) : (
             <>
               <div className="mb-2 flex flex-wrap items-center gap-3">
+                {instance.templateIconName && (
+                  <TemplateIcon
+                    name={instance.templateIconName}
+                    className="h-6 w-6"
+                  />
+                )}
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">
                   {instance.title}
                 </h1>

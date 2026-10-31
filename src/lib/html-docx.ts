@@ -16,11 +16,15 @@ type MammothBrowserModule = {
 /**
  * Convert a .docx file to an HTML body fragment (appended to the
  * document). Throws on invalid or empty documents.
+ *
+ * The mammoth browser bundle only accepts `{ arrayBuffer: ArrayBuffer }`
+ * (see its `browser/unzip.js`); passing `{ buffer }` makes every import
+ * fail with "Could not find file in options".
  */
 export async function docxToHtml(file: File): Promise<string> {
-  const buffer = new Uint8Array(await file.arrayBuffer());
+  const arrayBuffer = await file.arrayBuffer();
   const mod = (await import("mammoth/mammoth.browser")) as MammothBrowserModule;
-  const result = await mod.default.convertToHtml({ buffer });
+  const result = await mod.default.convertToHtml({ arrayBuffer });
   if (!result.value || !result.value.trim()) {
     throw new Error("empty document");
   }

@@ -1,35 +1,14 @@
 /**
  * DOCX import/export helpers for the HTML field editor.
  *
- * - Import: `mammoth` (browser bundle, lazy-loaded) converts .docx bytes
- *   to an HTML fragment that the editor appends to the document.
+ * - Import: `./docx-import` converts a .docx file to an HTML fragment that
+ *   the editor appends to the document (mammoth browser bundle plus
+ *   shape/header-footer compensation).
  * - Export: `dom-docx/browser` converts the editor HTML (with live
  *   computed styles) to a .docx Blob downloaded in the browser.
  */
 
-import type { convertToHtml } from "mammoth";
-
-type MammothBrowserModule = {
-  default: { convertToHtml: typeof convertToHtml };
-};
-
-/**
- * Convert a .docx file to an HTML body fragment (appended to the
- * document). Throws on invalid or empty documents.
- *
- * The mammoth browser bundle only accepts `{ arrayBuffer: ArrayBuffer }`
- * (see its `browser/unzip.js`); passing `{ buffer }` makes every import
- * fail with "Could not find file in options".
- */
-export async function docxToHtml(file: File): Promise<string> {
-  const arrayBuffer = await file.arrayBuffer();
-  const mod = (await import("mammoth/mammoth.browser")) as MammothBrowserModule;
-  const result = await mod.default.convertToHtml({ arrayBuffer });
-  if (!result.value || !result.value.trim()) {
-    throw new Error("empty document");
-  }
-  return result.value;
-}
+export { docxToHtml } from "./docx-import";
 
 export interface HtmlToDocxOptions {
   /** Live editor element used to snapshot computed styles. */

@@ -109,3 +109,38 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+/* HTML field editor (Tiptap): placeholder, highlight mark, tables. */
+@layer components {
+  .html-editor-content p.is-editor-empty:first-child::before {
+    color: hsl(var(--muted-foreground));
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+
+  .html-editor-content .highlight,
+  .html-editor-content mark[data-type="highlight"] {
+    background-color: #fef9c3;
+    border-radius: 0.125rem;
+    padding: 0 0.0625rem;
+  }
+
+  .html-editor-content table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .html-editor-content th,
+  .html-editor-content td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.25rem 0.5rem;
+    text-align: left;
+  }
+
+  .html-editor-content th {
+    background: hsl(var(--muted));
+    font-weight: 600;
+  }
+}

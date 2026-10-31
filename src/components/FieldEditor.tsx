@@ -1,6 +1,7 @@
 import { useI18n } from "@/i18n";
 import { Input } from "@/components/ui/input";
 import MarkdownEditor from "@/components/MarkdownEditor";
+import HtmlEditor from "@/components/HtmlEditor";
 import type { AttachmentValue, CustomType, FieldDef } from "@/lib/types";
 import { downloadAttachment } from "@/lib/work-instance-form";
 import type { FieldEditorProps } from "@/lib/work-instance-form";
@@ -56,7 +57,17 @@ const FieldEditor = ({
         disabled={busy}
       />
     );
-  } else if (def.type === "html" || def.type === "xml") {
+  } else if (def.type === "html") {
+    control = (
+      <HtmlEditor
+        id={id}
+        name={id}
+        value={String(value ?? "")}
+        disabled={busy}
+        onChange={(next) => onChange(next)}
+      />
+    );
+  } else if (def.type === "xml") {
     control = (
       <textarea
         id={id}
@@ -65,9 +76,7 @@ const FieldEditor = ({
         value={String(value ?? "")}
         onChange={(e) => onChange(e.target.value)}
         disabled={busy}
-        className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ${
-          def.type === "xml" ? "font-mono" : ""
-        }`}
+        className={`w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm text-foreground`}
       />
     );
   } else if (def.type === "md") {

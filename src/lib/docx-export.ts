@@ -146,8 +146,9 @@ function collectMdImageRefs(tokens: Token[]): string[] {
           refs.push(href);
         }
       }
-      if (token.tokens) {
-        walk(token.tokens as Token[]);
+      const nested = (token as { tokens?: Token[] }).tokens;
+      if (nested) {
+        walk(nested);
       }
     }
   };

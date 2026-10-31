@@ -1,6 +1,30 @@
+import { useEffect, useRef } from "react";
 import MarkdownView from "@/components/MarkdownView";
 import { downloadAttachment } from "@/lib/work-instance-form";
+import { resolveMdImages } from "@/lib/md-image";
 import { AttachmentValue, WorkInstanceField } from "@/lib/types";
+
+/**
+ * Read-only HTML value. App-managed image references (inserted from
+ * disk by the HTML/Markdown editors) are resolved to session-fetched
+ * object URLs after render.
+ */
+const HtmlValue = ({ html }: { html: string }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (containerRef.current) {
+      resolveMdImages(containerRef.current);
+    }
+  }, [html]);
+  return (
+    <div
+      ref={containerRef}
+      className="prose prose-sm max-w-none rounded-md border bg-muted/30 p-3 text-sm text-foreground"
+      // HTML authored by the same project members; rendered as-is.
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+};
 
 interface FieldValueProps {
   field: WorkInstanceField;
@@ -30,13 +54,7 @@ const FieldValue = ({ field }: FieldValueProps) => {
     );
   }
   if (field.type === "html") {
-    return (
-      <div
-        className="prose prose-sm max-w-none rounded-md border bg-muted/30 p-3 text-sm text-foreground"
-        // HTML authored by the same project members; rendered as-is.
-        dangerouslySetInnerHTML={{ __html: String(value) }}
-      />
-    );
+    return <HtmlValue html={String(value)} />;
   }
   if (field.type === "xml") {
     return (

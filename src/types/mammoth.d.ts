@@ -30,3 +30,13 @@ declare module "mammoth" {
     options?: Record<string, unknown>
   ): Promise<MammothHtmlResult>;
 }
+
+/**
+ * Self-contained UMD browser bundle (bundled with mammoth 1.13).
+ * Vite's CJS interop exposes the API object as the default export.
+ */
+declare module "mammoth/mammoth.browser" {
+  import type { convertToHtml } from "mammoth";
+  const mammoth: { convertToHtml: typeof convertToHtml };
+  export default mammoth;
+}
